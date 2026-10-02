@@ -1,0 +1,6 @@
+{
+  "name": "Mis 15 Valentina - Gala de Recuerdos en Vivo",
+  "description": "App colaborativa para eventos de 15 años: cámara con marcos de gala, dedicatorias en tiempo real, sincronización con Google Drive y proyección en pantalla gigante.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
