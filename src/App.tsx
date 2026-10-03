@@ -40,8 +40,11 @@ export default function App() {
         if (!parsed.driveAccount || parsed.driveAccount.includes('mendez@gmail.com')) {
           parsed.driveAccount = initialEventSettings.driveAccount;
         }
-        if (!parsed.driveFolderId || parsed.driveFolderId.includes('1A2b3C4D5e')) {
-          parsed.driveFolderId = initialEventSettings.driveFolderId;
+        if (!parsed.driveFolderId || parsed.driveFolderId.includes('1A2b3C4D5e') || parsed.driveFolderId.startsWith('AKfycb')) {
+          parsed.driveFolderId = '1bHI5-NkaB7LBEeTD_wOZ-_nfcuTOLYrt';
+        }
+        if (!parsed.driveDirectFolderUrl) {
+          parsed.driveDirectFolderUrl = 'https://drive.google.com/drive/folders/1bHI5-NkaB7LBEeTD_wOZ-_nfcuTOLYrt';
         }
         return parsed;
       }
@@ -125,6 +128,10 @@ export default function App() {
   };
 
   const handleDeleteMemory = (id: string) => {
+    if (!isAdminAuthenticated) {
+      setIsAdminLoginModalOpen(true);
+      return;
+    }
     setMemories((prev) => prev.filter((m) => m.id !== id));
   };
 
@@ -214,6 +221,7 @@ export default function App() {
               onNavigate={handleNavigate}
               onDeleteMemory={handleDeleteMemory}
               isAdminAuthenticated={isAdminAuthenticated}
+              eventSettings={eventSettings}
             />
           )}
 

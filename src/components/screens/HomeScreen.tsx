@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { EventSettings, Memory, TabType } from '../../types';
 
 interface HomeScreenProps {
@@ -21,6 +21,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   memories,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [selectedMemory, setSelectedMemory] = useState<Memory | null>(null);
 
   const suggestedTables = [
     'Familia Real',
@@ -45,7 +46,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   };
 
   return (
-    <div className="w-full flex flex-col space-y-4 pt-2">
+    <div className="w-full flex flex-col space-y-4 pt-2 pb-32">
       {/* 1. Hero Visual Card: Portrait & Couture Typography */}
       <section className="relative rounded-2xl overflow-hidden border border-white/10 bg-[#0b0e15] shadow-[0_16px_36px_-10px_rgba(0,0,0,0.85)]">
         <div className="relative w-full h-[290px] overflow-hidden group">
@@ -188,65 +189,148 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           <p className="text-xs text-[#8d90a0] leading-snug">
             Tus fotos se guardan automáticamente en la nube privada de Valentina. Recuerdos seguros para toda la vida.
           </p>
+          {eventSettings.driveDirectFolderUrl && (
+            <a
+              href={eventSettings.driveDirectFolderUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-[11px] text-emerald-400 font-bold hover:underline mt-1"
+            >
+              <span>📁 Abrir carpeta compartida de Google Drive</span>
+              <span className="material-symbols-outlined text-[13px]">open_in_new</span>
+            </a>
+          )}
         </div>
       </section>
 
-      {/* 6. Live Atmosphere Feed Teaser */}
-      <section className="pt-1 pb-4">
-        <div className="flex justify-between items-center mb-2 px-1">
+      {/* 6. Galería de la Fiesta Completa & Dinámica */}
+      <section className="pt-2">
+        <div className="flex justify-between items-center mb-2.5 px-1">
           <div className="flex items-center space-x-2">
-            <span className="material-symbols-outlined text-[#7bd0ff] text-[18px]">stream</span>
-            <span className="font-serif-gala text-base font-bold text-white">Galería de la Fiesta</span>
+            <span className="material-symbols-outlined text-[#7bd0ff] text-[20px]">
+              photo_library
+            </span>
+            <span className="font-serif-gala text-base font-bold text-white">
+              Galería de la Fiesta
+            </span>
           </div>
-          <span className="text-[11px] text-[#8d90a0]">
-            {memories.length + 44} fotos subidas
+          <span className="text-[11px] font-semibold text-[#7bd0ff] bg-[#2563eb]/20 px-2.5 py-0.5 rounded-full border border-[#7bd0ff]/20">
+            {memories.length} {memories.length === 1 ? 'foto' : 'fotos'}
           </span>
         </div>
 
-        <div className="grid grid-cols-3 gap-2">
-          {/* Thumb 1 */}
-          <div
-            onClick={() => onNavigate('album')}
-            className="relative rounded-lg overflow-hidden aspect-square border border-white/10 group cursor-pointer"
-          >
-            <img
-              src={memories[0]?.image || "https://lh3.googleusercontent.com/aida-public/AB6AXuAlCP9o8VTB-3zvmBhvNis36nUs1rxtsURufAgU99wjPBXq0tnQadD-OcUnFxcnXX-MYfuSgTKjeqQ_vb5tGS_XJ3OX1ymKgacHwRKGqGG4Du_dHNg45If2Rd4vKhJKM0gBoNjPJPbz40QTk2aKXiSSBi4ZLxFfgbhtt7xyMJtUrm5rTCladUi3qkjlJxfyzs-6px_FjqKFq4_8uJub7G-cpWXoPjtQf0FDDdsMmH_7gN5DtUIVR8z5HQ"}
-              alt="Foto Fiesta"
-              className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
-            />
-            <span className="absolute bottom-1 right-1 bg-black/70 backdrop-blur-sm text-[9px] font-semibold text-[#7bd0ff] px-1 rounded">
-              21:14
-            </span>
-          </div>
+        {/* Dynamic Responsive Grid of Memories */}
+        <div className="grid grid-cols-3 gap-2.5">
+          {memories.slice(0, 5).map((item) => (
+            <div
+              key={item.id}
+              onClick={() => setSelectedMemory(item)}
+              className="relative rounded-xl overflow-hidden aspect-square border border-white/10 group cursor-pointer bg-[#0b0e15] shadow-md hover:border-[#7bd0ff]/60 transition-all duration-300"
+            >
+              <img
+                src={item.image}
+                alt={item.author}
+                className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent opacity-80 group-hover:opacity-100 transition-opacity"></div>
 
-          {/* Thumb 2 */}
-          <div
-            onClick={() => onNavigate('album')}
-            className="relative rounded-lg overflow-hidden aspect-square border border-white/10 group cursor-pointer"
-          >
-            <img
-              src={memories[1]?.image || "https://lh3.googleusercontent.com/aida-public/AB6AXuCwHLz-vdd5dwaD5k5X-yht2unCXKV0JncXPqs2HcYz0XjsaqjtCTiOmZE3JLajqRei__USEKLykLR7nEdCeC_JofFRp9WtimyC0eNK_sg8xJFhxuf-0M5AFKZwgA-9LjO8Zo4LH-WzBRDRa1KxW2tcfrq3Rt8gdgC3chNN8UWHnYWCxKSOuSvyO9x3DWg2LpqeriCmaVvzg-P8dsrjgETzsHPTX9mLcepnZRFTKkJXmSMzrqYm3s-ivA"}
-              alt="Foto Fiesta 2"
-              className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
-            />
-            <span className="absolute bottom-1 right-1 bg-black/70 backdrop-blur-sm text-[9px] font-semibold text-[#7bd0ff] px-1 rounded">
-              21:28
-            </span>
-          </div>
+              {/* Bottom tag with author & reaction */}
+              <div className="absolute bottom-1 left-1.5 right-1.5 flex items-center justify-between text-[10px] text-white">
+                <span className="truncate font-medium drop-shadow-sm max-w-[70%]">
+                  {item.author.split(' ')[0]}
+                </span>
+                <span className="text-xs">{item.reaction || '💙'}</span>
+              </div>
+            </div>
+          ))}
 
-          {/* Thumbnail 3: Uplink placeholder */}
+          {/* "+ Subir Foto" Action Card */}
           <button
             type="button"
             onClick={() => onNavigate('camara')}
-            className="rounded-lg aspect-square border border-dashed border-white/20 flex flex-col items-center justify-center p-2 text-center bg-[#191b23]/50 hover:border-[#7bd0ff]/50 hover:bg-[#2563eb]/10 transition-colors group cursor-pointer"
+            className="rounded-xl aspect-square border-2 border-dashed border-[#7bd0ff]/40 flex flex-col items-center justify-center p-2 text-center bg-[#2563eb]/10 hover:border-[#7bd0ff] hover:bg-[#2563eb]/25 transition-all group cursor-pointer active:scale-95 shadow-md"
           >
-            <span className="material-symbols-outlined text-[#7bd0ff] text-[22px] mb-1 group-hover:scale-110 transition-transform">
-              add_photo_alternate
-            </span>
-            <span className="text-[11px] text-[#8d90a0] group-hover:text-white font-medium">Tu foto aquí</span>
+            <div className="w-8 h-8 rounded-full bg-[#7bd0ff]/20 flex items-center justify-center mb-1 group-hover:scale-110 transition-transform">
+              <span className="material-symbols-outlined text-[#7bd0ff] text-xl">
+                add_a_photo
+              </span>
+            </div>
+            <span className="text-[11px] text-white font-bold tracking-tight">Tu foto</span>
+            <span className="text-[9px] text-[#7bd0ff]">aquí</span>
           </button>
         </div>
+
+        {/* Ver Álbum Completo Button */}
+        <button
+          type="button"
+          onClick={() => onNavigate('album')}
+          className="w-full mt-3 py-3 px-4 rounded-xl bg-[#1d1f27] hover:bg-[#2563eb]/20 border border-white/10 hover:border-[#7bd0ff]/40 text-xs font-semibold text-white flex items-center justify-center gap-2 transition-all active:scale-[0.98] shadow-sm cursor-pointer"
+        >
+          <span>Ver todas las fotos en el Muro ({memories.length})</span>
+          <span className="material-symbols-outlined text-sm text-[#7bd0ff]">arrow_forward</span>
+        </button>
       </section>
+
+      {/* Lightbox Modal for Full View when tapping any photo */}
+      {selectedMemory && (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => setSelectedMemory(null)}
+        >
+          <div
+            className="relative max-w-sm w-full bg-[#10131a] rounded-3xl overflow-hidden border border-white/15 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Image */}
+            <div className="relative aspect-[4/5] bg-black">
+              <img
+                src={selectedMemory.image}
+                alt={selectedMemory.author}
+                className="w-full h-full object-cover"
+              />
+              <button
+                type="button"
+                onClick={() => setSelectedMemory(null)}
+                className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-white flex items-center justify-center hover:bg-black transition-colors cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-base">close</span>
+              </button>
+            </div>
+
+            {/* Content Details */}
+            <div className="p-4 space-y-2 text-left">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-sm font-bold text-white font-sans-ui">
+                    {selectedMemory.author}
+                  </h4>
+                  <p className="text-[11px] text-[#8d90a0]">
+                    {selectedMemory.table} · {selectedMemory.time}
+                  </p>
+                </div>
+                <span className="text-2xl">{selectedMemory.reaction || '💙'}</span>
+              </div>
+
+              {selectedMemory.message && (
+                <p className="text-xs text-[#c3c6d7] italic bg-[#0b0e15] p-2.5 rounded-xl border border-white/5">
+                  "{selectedMemory.message}"
+                </p>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedMemory(null);
+                  onNavigate('album');
+                }}
+                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-[#2563eb] to-[#7bd0ff] text-[#0b0e15] text-xs font-bold transition-opacity hover:opacity-95 cursor-pointer mt-1"
+              >
+                Ver en el Muro en Vivo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

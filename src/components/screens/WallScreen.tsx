@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Memory, TabType } from '../../types';
+import { EventSettings, Memory, TabType } from '../../types';
 
 interface WallScreenProps {
   memories: Memory[];
@@ -7,6 +7,7 @@ interface WallScreenProps {
   onNavigate: (tab: TabType) => void;
   onDeleteMemory?: (id: string) => void;
   isAdminAuthenticated?: boolean;
+  eventSettings?: EventSettings;
 }
 
 export const WallScreen: React.FC<WallScreenProps> = ({
@@ -15,6 +16,7 @@ export const WallScreen: React.FC<WallScreenProps> = ({
   onNavigate,
   onDeleteMemory,
   isAdminAuthenticated,
+  eventSettings,
 }) => {
   const [activeFilter, setActiveFilter] = useState<'recientes' | 'populares' | 'selfies'>('recientes');
 
@@ -63,6 +65,37 @@ export const WallScreen: React.FC<WallScreenProps> = ({
 
   return (
     <div className="w-full flex flex-col gap-4 pb-32 pt-1 relative">
+      {/* Admin Status / Protected Wall Indicator */}
+      {isAdminAuthenticated ? (
+        <div className="p-2.5 rounded-xl bg-amber-400/10 border border-amber-400/30 flex items-center justify-between text-xs text-amber-300">
+          <div className="flex items-center gap-1.5 font-semibold">
+            <span className="material-symbols-outlined text-base text-amber-400">shield_person</span>
+            <span>Sesión de Administrador: Eliminación de fotos permitida</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => onNavigate('ajustes')}
+            className="text-[11px] font-bold text-[#7bd0ff] hover:underline cursor-pointer"
+          >
+            Ajustes
+          </button>
+        </div>
+      ) : (
+        <div className="px-3 py-1.5 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between text-[11px] text-[#8d90a0]">
+          <span className="flex items-center gap-1">
+            <span className="material-symbols-outlined text-xs text-emerald-400">lock</span>
+            <span>Muro protegido • Solo el administrador puede eliminar fotos</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => onNavigate('ajustes')}
+            className="text-[#7bd0ff] hover:underline font-medium text-[10px] cursor-pointer"
+          >
+            Acceso Admin
+          </button>
+        </div>
+      )}
+
       {/* Sub-header & Filter Bar */}
       <section className="flex items-center justify-between gap-2 px-1">
         <div className="flex items-center gap-1.5 text-[#c3c6d7]">
@@ -132,6 +165,21 @@ export const WallScreen: React.FC<WallScreenProps> = ({
               <p className="text-xs text-[#c3c6d7] mt-1 leading-snug font-light">
                 Sincronizado en tiempo real. ¡Tus tomas se guardan automáticamente en alta resolución!
               </p>
+
+              {/* Botón directo a carpeta compartida si está configurada */}
+              {eventSettings?.driveDirectFolderUrl && (
+                <a
+                  href={eventSettings.driveDirectFolderUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2.5 inline-flex items-center gap-1.5 py-1.5 px-3 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-emerald-300 hover:text-white text-xs font-bold transition-all active:scale-95 shadow-sm"
+                >
+                  <span className="material-symbols-outlined text-[16px]">folder_shared</span>
+                  <span>Abrir Carpeta de Google Drive (Subir varias fotos a la vez)</span>
+                  <span className="material-symbols-outlined text-xs">open_in_new</span>
+                </a>
+              )}
+
               {/* Progress Line */}
               <div className="w-full bg-[#32353d]/70 h-1.5 rounded-full mt-3 overflow-hidden">
                 <div className="bg-gradient-to-r from-[#2563eb] to-[#7bd0ff] h-full rounded-full w-4/5 animate-pulse"></div>
@@ -158,8 +206,13 @@ export const WallScreen: React.FC<WallScreenProps> = ({
                   <h4 className="text-xs font-semibold text-white leading-tight font-sans-ui">
                     {item.author}
                   </h4>
-                  <p className="text-[11px] text-[#8d90a0]">
-                    {item.time} • {item.table}
+                  <p className="text-[11px] text-[#8d90a0] flex items-center gap-1.5 mt-0.5">
+                    <span className="inline-flex items-center gap-1 text-[#7bd0ff] font-mono font-semibold">
+                      <span className="material-symbols-outlined text-[12px]">schedule</span>
+                      {item.time}
+                    </span>
+                    <span>•</span>
+                    <span>{item.table}</span>
                   </p>
                 </div>
               </div>
@@ -185,6 +238,12 @@ export const WallScreen: React.FC<WallScreenProps> = ({
                 className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-[#0b0e15]/95 via-transparent to-transparent pointer-events-none"></div>
+
+              {/* Exact capture time badge on photo */}
+              <div className="absolute top-3 right-3 px-2.5 py-0.5 rounded-full bg-black/75 backdrop-blur-md border border-[#7bd0ff]/40 text-[10px] font-mono font-bold text-[#7bd0ff] flex items-center gap-1 shadow-md">
+                <span className="material-symbols-outlined text-[12px]">schedule</span>
+                <span>{item.time}</span>
+              </div>
 
               {/* Tag Pill if cotillon/pista */}
               {item.momentTag && (
@@ -246,16 +305,21 @@ export const WallScreen: React.FC<WallScreenProps> = ({
                         <span className="material-symbols-outlined text-xs">download</span>
                       </button>
 
-                      {onDeleteMemory && (
+                      {/* Solo el Administrador Autenticado puede ver y pulsar el botón de eliminar */}
+                      {isAdminAuthenticated && onDeleteMemory && (
                         <button
                           type="button"
                           onClick={() => {
-                            if (window.confirm(`¿Eliminar la foto de "${item.author}" de la presentación y el muro?`)) {
+                            if (
+                              window.confirm(
+                                `¿Seguro que deseas eliminar la foto de "${item.author}"? Esta acción solo la puede realizar el administrador.`
+                              )
+                            ) {
                               onDeleteMemory(item.id);
                             }
                           }}
-                          className="w-7 h-7 rounded-full bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400 hover:bg-rose-500 hover:text-white transition-colors cursor-pointer"
-                          title="Eliminar foto de la presentación"
+                          className="w-7 h-7 rounded-full bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 hover:bg-rose-500 hover:text-white transition-colors cursor-pointer"
+                          title="Eliminar foto (Exclusivo Administrador)"
                         >
                           <span className="material-symbols-outlined text-xs">delete</span>
                         </button>

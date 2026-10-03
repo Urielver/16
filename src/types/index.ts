@@ -33,6 +33,7 @@ export interface EventSettings {
   driveFolder: string;
   driveFolderId?: string;
   driveWebhookUrl: string;
+  driveDirectFolderUrl?: string;
   strictDeletePermission: boolean;
   moderationEnabled: boolean;
   eventSlug: string;

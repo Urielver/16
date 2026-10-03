@@ -19,11 +19,66 @@ export const CameraScreen: React.FC<CameraScreenProps> = ({
   const [timerCount, setTimerCount] = useState<number | null>(null);
   const [cameraActive, setCameraActive] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [currentTime, setCurrentTime] = useState<string>(() => {
+    return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' hs';
+  });
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(
+        new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' hs'
+      );
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Draws an elegant, legible gala timestamp watermark directly on the captured photo
+  const drawTimestampOnCanvas = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' hs';
+    const stampText = `⏰ ${timeStr} • ${eventSettings.eventName}`;
+
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset mirroring for watermark text
+
+    const fontSize = Math.max(14, Math.round(width * 0.032));
+    ctx.font = `bold ${fontSize}px system-ui, -apple-system, sans-serif`;
+    const textMetrics = ctx.measureText(stampText);
+    const padX = fontSize * 0.75;
+    const padY = fontSize * 0.4;
+    const boxW = textMetrics.width + padX * 2;
+    const boxH = fontSize + padY * 2;
+    const boxX = width - boxW - width * 0.035;
+    const boxY = height - boxH - height * 0.035;
+
+    // Dark pill container
+    ctx.fillStyle = 'rgba(11, 14, 21, 0.85)';
+    ctx.beginPath();
+    if (ctx.roundRect) {
+      ctx.roundRect(boxX, boxY, boxW, boxH, boxH / 2);
+    } else {
+      ctx.rect(boxX, boxY, boxW, boxH);
+    }
+    ctx.fill();
+
+    // Cyan gala border
+    ctx.strokeStyle = 'rgba(123, 208, 255, 0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Text
+    ctx.fillStyle = '#7bd0ff';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(stampText, boxX + padX, boxY + boxH / 2);
+
+    ctx.restore();
+  };
 
   // Fallback ballroom party image if device camera is inaccessible or permission denied
   const fallbackBallroomImage =
@@ -96,6 +151,7 @@ export const CameraScreen: React.FC<CameraScreenProps> = ({
           ctx.scale(-1, 1);
         }
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        drawTimestampOnCanvas(ctx, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
         onCapturePhoto(dataUrl, selectedFrame);
         return;
@@ -113,6 +169,7 @@ export const CameraScreen: React.FC<CameraScreenProps> = ({
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(fallbackImage, 0, 0, canvas.width, canvas.height);
+          drawTimestampOnCanvas(ctx, canvas.width, canvas.height);
           const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
           onCapturePhoto(dataUrl, selectedFrame);
         }
@@ -295,9 +352,10 @@ export const CameraScreen: React.FC<CameraScreenProps> = ({
             </p>
             <span className="material-symbols-outlined text-[#7bd0ff] text-[18px]">stars</span>
           </div>
-          <span className="text-[10px] font-sans-ui text-[#8d90a0] tracking-widest mt-1 opacity-90 uppercase font-semibold">
-            Recuerdo Oficial
-          </span>
+          <div className="flex items-center gap-1.5 mt-1.5 bg-[#0b0e15]/90 px-3 py-0.5 rounded-full border border-[#7bd0ff]/30 text-[11px] font-mono font-bold text-[#7bd0ff] shadow-md">
+            <span className="material-symbols-outlined text-[13px]">schedule</span>
+            <span>Hora: {currentTime}</span>
+          </div>
         </div>
 
         {/* Big Countdown Overlay */}

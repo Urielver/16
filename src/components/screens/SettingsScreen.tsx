@@ -20,7 +20,16 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   memories = [],
   onDeleteMemory,
 }) => {
-  const [formData, setFormData] = useState<EventSettings>({ ...eventSettings });
+  const [formData, setFormData] = useState<EventSettings>(() => ({
+    ...eventSettings,
+    driveFolderId:
+      eventSettings.driveFolderId && !eventSettings.driveFolderId.startsWith('AKfycb')
+        ? eventSettings.driveFolderId
+        : '1bHI5-NkaB7LBEeTD_wOZ-_nfcuTOLYrt',
+    driveDirectFolderUrl:
+      eventSettings.driveDirectFolderUrl ||
+      'https://drive.google.com/drive/folders/1bHI5-NkaB7LBEeTD_wOZ-_nfcuTOLYrt',
+  }));
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [saveMessage, setSaveMessage] = useState<string>('Todos los cambios sincronizados');
   const [showAdminPassword, setShowAdminPassword] = useState<boolean>(false);
@@ -96,15 +105,21 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     setTestDriveMessage('Enviando solicitud de prueba a tu Google Drive...');
 
     try {
+      const cleanFolderId =
+        formData.driveFolderId && !formData.driveFolderId.startsWith('AKfycb')
+          ? formData.driveFolderId.trim()
+          : '1bHI5-NkaB7LBEeTD_wOZ-_nfcuTOLYrt';
+
       const testPayload = {
         test: true,
         nombre: 'Prueba de Conexión',
-        mesa: 'Admin',
-        dedicatoria: 'Verificación de almacenamiento en Google Drive',
-        folderId: formData.driveFolderId || '',
-        folderName: formData.driveFolder,
-        email: formData.driveAccount,
-        image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        mesa: 'Mesa Admin',
+        dedicatoria: 'Verificación de sincronización con Google Drive',
+        folderId: cleanFolderId,
+        folderName: formData.driveFolder || 'Mis 15 Valentina - Fotos en Vivo',
+        email: formData.driveAccount || 'carlosvargasotorgues@gmail.com',
+        image:
+          'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
         mimeType: 'image/png',
       };
 
@@ -117,7 +132,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
       setTestDriveStatus('success');
       setTestDriveMessage(
-        '✅ Solicitud enviada correctamente a tu Webhook de Google Apps Script. Revisa tu carpeta en Google Drive para confirmar el archivo de prueba.'
+        '✅ Solicitud enviada correctamente a tu Webhook. El script creará o ubicará la carpeta "Mis 15 Valentina - Fotos en Vivo" en tu Google Drive.'
       );
     } catch (err) {
       setTestDriveStatus('error');
@@ -127,41 +142,98 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
   // Copy Google Apps Script code to clipboard
   const handleCopyScriptCode = () => {
-    const folderId = formData.driveFolderId || 'TU_ID_DE_CARPETA_DE_DRIVE_AQUI';
+    const cleanFolderId =
+      formData.driveFolderId && !formData.driveFolderId.startsWith('AKfycb')
+        ? formData.driveFolderId.trim()
+        : '1bHI5-NkaB7LBEeTD_wOZ-_nfcuTOLYrt';
+
     const scriptCode = `/**
  * API Backend de Mis 15 - Google Apps Script
  * Guarda fotos de los invitados directamente en tu Google Drive
+ * ¡Crea automáticamente la carpeta si no existe y nunca falla!
  */
-const FOLDER_ID = "${folderId}";
-
 function doPost(e) {
   try {
+    if (!e || !e.postData || !e.postData.contents) {
+      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Sin datos postData" })).setMimeType(ContentService.MimeType.JSON);
+    }
     const data = JSON.parse(e.postData.contents);
     if (!data.image) {
       return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Sin imagen" })).setMimeType(ContentService.MimeType.JSON);
     }
-    const base64Data = data.image.split(",")[1] || data.image;
-    const targetFolderId = data.folderId || FOLDER_ID;
-    const folder = DriveApp.getFolderById(targetFolderId);
-    const decodedBlob = Utilities.newBlob(
-      Utilities.base64Decode(base64Data),
-      data.mimeType || "image/jpeg",
-      "Recuerdo_" + (data.mesa || "Mesa").replace(/\\s+/g, '_') + "_" + (data.nombre || "Invitado").replace(/\\s+/g, '_') + "_" + Date.now() + ".jpg"
-    );
+
+    // 1. Obtener o crear la carpeta de destino de forma segura
+    let folder = null;
+    const rawFolderId = "${cleanFolderId}" || (data.folderId || "").trim();
+    if (rawFolderId && rawFolderId.length > 10 && rawFolderId.indexOf("AKfy") !== 0) {
+      try {
+        folder = DriveApp.getFolderById(rawFolderId);
+      } catch (err) {
+        folder = null;
+      }
+    }
+
+    // Si no hay carpeta por ID, buscar o crear la carpeta "Mis 15 Valentina - Fotos en Vivo"
+    if (!folder) {
+      const folderName = (data.folderName || "Mis 15 Valentina - Fotos en Vivo").replace(/^Drive\\s*\\/\\s*/i, "").trim() || "Mis 15 Valentina - Fotos";
+      const folders = DriveApp.getFoldersByName(folderName);
+      if (folders.hasNext()) {
+        folder = folders.next();
+      } else {
+        folder = DriveApp.createFolder(folderName);
+      }
+    }
+
+    // 2. Procesar la imagen (soporta Base64 y URL)
+    let decodedBlob = null;
+    const authorName = (data.nombre || "Invitado").replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ_ -]/g, "").trim().replace(/\\s+/g, "_");
+    const tableName = (data.mesa || "Mesa").replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ_ -]/g, "").trim().replace(/\\s+/g, "_");
+    const fileName = "Recuerdo_" + tableName + "_" + authorName + "_" + Date.now() + ".jpg";
+
+    if (data.image.indexOf("http") === 0) {
+      const resp = UrlFetchApp.fetch(data.image);
+      decodedBlob = resp.getBlob().setName(fileName);
+    } else {
+      let rawBase64 = data.image;
+      if (rawBase64.indexOf(",") > -1) {
+        rawBase64 = rawBase64.split(",")[1];
+      }
+      const bytes = Utilities.base64Decode(rawBase64);
+      decodedBlob = Utilities.newBlob(bytes, data.mimeType || "image/jpeg", fileName);
+    }
+
+    // 3. Crear el archivo en la carpeta de Google Drive
     const file = folder.createFile(decodedBlob);
-    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-    return ContentService.createTextOutput(JSON.stringify({ status: "success", fileId: file.getId(), url: file.getUrl() })).setMimeType(ContentService.MimeType.JSON);
+    try {
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch(shareErr) {}
+
+    if (data.dedicatoria) {
+      file.setDescription("Dedicatoria: " + data.dedicatoria + " | Mesa: " + data.mesa + " | Reacción: " + (data.reaccion || ""));
+    }
+
+    return ContentService.createTextOutput(JSON.stringify({
+      status: "success",
+      fileId: file.getId(),
+      fileName: file.getName(),
+      folderName: folder.getName(),
+      url: file.getUrl()
+    })).setMimeType(ContentService.MimeType.JSON);
+
   } catch (err) {
     return ContentService.createTextOutput(JSON.stringify({ status: "error", message: err.toString() })).setMimeType(ContentService.MimeType.JSON);
   }
 }
 
 function doGet(e) {
-  return ContentService.createTextOutput("API Mis 15 Google Drive Activa").setMimeType(ContentService.MimeType.TEXT);
+  return ContentService.createTextOutput(JSON.stringify({
+    status: "online",
+    message: "Servicio de Google Drive para Mis 15 funcionando correctamente"
+  })).setMimeType(ContentService.MimeType.JSON);
 }`;
 
     navigator.clipboard?.writeText(scriptCode);
-    alert('¡Código de Google Apps Script copiado al portapapeles! Pégalo en script.google.com y haz clic en Implementar > Nueva implementación > Aplicación web.');
+    alert('¡Código de Google Apps Script copiado al portapapeles! Pégalo en tu proyecto de script.google.com, haz clic en Implementar > Nueva implementación y actualízalo.');
   };
 
   // Download all memories as JSON backup
@@ -612,19 +684,105 @@ function doGet(e) {
             </div>
           </div>
 
-          {/* Guía desplegable */}
+          {/* Guía desplegable visual paso a paso */}
           {showDriveInstructions && (
-            <div className="p-3 rounded-xl bg-[#10131a] border border-white/10 text-xs space-y-2 text-[#c3c6d7] animate-in fade-in duration-200">
-              <h4 className="font-bold text-white text-xs flex items-center gap-1">
-                <span className="material-symbols-outlined text-sm text-[#7bd0ff]">task_alt</span>
-                Pasos para que las fotos caigan directo a tu Google Drive:
-              </h4>
-              <ol className="list-decimal pl-4 space-y-1 text-[11px] text-[#8d90a0]">
-                <li>Abre <a href="https://drive.google.com" target="_blank" rel="noreferrer" className="text-[#7bd0ff] underline">Google Drive</a> y crea una carpeta para las fotos. Copia el ID que está en la barra de URL (las letras y números después de <code className="text-white">/folders/</code>).</li>
-                <li>Entra a <a href="https://script.google.com" target="_blank" rel="noreferrer" className="text-[#7bd0ff] underline">script.google.com</a>, crea un <strong>Nuevo proyecto</strong> y pega el código que copiaste con el botón de arriba.</li>
-                <li>Haz clic en <strong>Implementar &gt; Nueva implementación &gt; Tipo: Aplicación web</strong>. En <em>Quién tiene acceso</em> elige: <strong>Cualquier usuario</strong>.</li>
-                <li>Copia la URL que termina en <code className="text-white">/exec</code> y pégala en el campo <strong>Webhook de Google Apps Script</strong> abajo. ¡Listo!</li>
-              </ol>
+            <div className="p-4 rounded-xl bg-[#10131a] border border-[#7bd0ff]/30 text-xs space-y-3.5 text-[#c3c6d7] animate-in fade-in duration-200">
+              <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                <h4 className="font-bold text-white text-sm flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-base text-[#7bd0ff]">verified</span>
+                  Guía Paso a Paso para Conectar Google Drive
+                </h4>
+                <span className="text-[10px] text-amber-300 bg-amber-400/10 px-2 py-0.5 rounded-full border border-amber-400/20">
+                  Solo toma 2 minutos
+                </span>
+              </div>
+
+              {/* Paso 1 */}
+              <div className="flex items-start gap-2.5 p-2.5 rounded-lg bg-white/5 border border-white/5">
+                <div className="w-6 h-6 rounded-full bg-[#2563eb] text-white text-xs font-bold flex items-center justify-center shrink-0">
+                  1
+                </div>
+                <div className="flex-1 space-y-1">
+                  <p className="text-white font-bold text-xs">Copia el Script de la App</p>
+                  <p className="text-[11px] text-[#8d90a0]">
+                    Pulsa arriba en el botón amarillo <strong className="text-amber-300">"Copiar Script de Google Drive (1 Clic)"</strong>.
+                  </p>
+                </div>
+              </div>
+
+              {/* Paso 2 */}
+              <div className="flex items-start gap-2.5 p-2.5 rounded-lg bg-white/5 border border-white/5">
+                <div className="w-6 h-6 rounded-full bg-[#2563eb] text-white text-xs font-bold flex items-center justify-center shrink-0">
+                  2
+                </div>
+                <div className="flex-1 space-y-1">
+                  <p className="text-white font-bold text-xs">Abre Google Apps Script y Pega el Código</p>
+                  <p className="text-[11px] text-[#8d90a0]">
+                    Ve a <a href="https://script.google.com" target="_blank" rel="noreferrer" className="text-[#7bd0ff] underline font-bold">script.google.com</a> con tu correo <strong>carlosvargasotorgues@gmail.com</strong>.
+                    Haz clic en <strong>"Nuevo proyecto"</strong>, borra cualquier texto que aparezca y pega el código que copiaste.
+                  </p>
+                </div>
+              </div>
+
+              {/* Paso 3: EL PASO CLAVE QUE SUELE TRABAR A LOS USUARIOS */}
+              <div className="flex items-start gap-2.5 p-2.5 rounded-lg bg-amber-400/10 border border-amber-400/30">
+                <div className="w-6 h-6 rounded-full bg-amber-400 text-black text-xs font-bold flex items-center justify-center shrink-0">
+                  3
+                </div>
+                <div className="flex-1 space-y-1">
+                  <p className="text-amber-300 font-bold text-xs">
+                    Implementar como Aplicación Web (¡Muy Importante!)
+                  </p>
+                  <p className="text-[11px] text-white/90 leading-relaxed">
+                    Arriba a la derecha haz clic en el botón azul <strong>"Implementar" &gt; "Nueva implementación"</strong>:
+                  </p>
+                  <ul className="list-disc pl-4 text-[11px] text-slate-300 space-y-1">
+                    <li>Haz clic en el engranaje ⚙️ y elige: <strong>Aplicación web</strong>.</li>
+                    <li><strong>Ejecutar como:</strong> Selecciona <span className="text-emerald-400 font-bold">Yo (carlosvargasotorgues@gmail.com)</span>.</li>
+                    <li><strong>Quién tiene acceso:</strong> Selecciona <span className="text-emerald-400 font-bold">Cualquier usuario (Anyone)</span>.</li>
+                  </ul>
+                </div>
+              </div>
+
+              {/* Paso 4: PANTALLA DE PERMISOS DE GOOGLE */}
+              <div className="flex items-start gap-2.5 p-2.5 rounded-lg bg-white/5 border border-white/5">
+                <div className="w-6 h-6 rounded-full bg-[#2563eb] text-white text-xs font-bold flex items-center justify-center shrink-0">
+                  4
+                </div>
+                <div className="flex-1 space-y-1">
+                  <p className="text-white font-bold text-xs">Autorizar Permisos en Google</p>
+                  <p className="text-[11px] text-[#8d90a0] leading-relaxed">
+                    Google te pedirá autorizar el acceso:
+                  </p>
+                  <ol className="list-decimal pl-4 text-[11px] text-slate-300 space-y-0.5">
+                    <li>Elige tu cuenta de Google.</li>
+                    <li>Si te sale la pantalla <em>"Google no verificó esta app"</em>, haz clic en <strong className="text-white">"Avanzado"</strong> o <strong className="text-white">"Configuración avanzada"</strong> abajo a la izquierda.</li>
+                    <li>Haz clic en <strong className="text-amber-300">"Ir a Proyecto (no seguro)"</strong> y luego en <strong className="text-emerald-400">"Permitir"</strong>.</li>
+                  </ol>
+                </div>
+              </div>
+
+              {/* Paso 5 */}
+              <div className="flex items-start gap-2.5 p-2.5 rounded-lg bg-white/5 border border-white/5">
+                <div className="w-6 h-6 rounded-full bg-[#2563eb] text-white text-xs font-bold flex items-center justify-center shrink-0">
+                  5
+                </div>
+                <div className="flex-1 space-y-1">
+                  <p className="text-white font-bold text-xs">Pega la URL de la Aplicación Web</p>
+                  <p className="text-[11px] text-[#8d90a0]">
+                    Google te dará una <strong>URL de aplicación web</strong> que termina en <code className="text-[#7bd0ff] font-bold">/exec</code>.
+                    Cópiala y pégala abajo en el campo <strong>Webhook de Google Apps Script</strong>.
+                  </p>
+                </div>
+              </div>
+
+              {/* Paso 6 */}
+              <div className="p-2.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 flex items-center gap-2">
+                <span className="material-symbols-outlined text-lg shrink-0">check_circle</span>
+                <span className="text-[11px] font-medium">
+                  ¡Listo! Haz clic abajo en <strong>"Probar Conexión con mi Google Drive"</strong> y verás la carpeta <strong>"Mis 15 Valentina - Fotos en Vivo"</strong> en tu Google Drive.
+                </span>
+              </div>
             </div>
           )}
 
@@ -718,8 +876,20 @@ function doGet(e) {
               />
             </div>
             <p className="text-[10px] text-[#8d90a0]">
-              Copia este ID desde la barra de direcciones de drive.google.com de tu carpeta.
+              Copia este ID desde la barra de direcciones de drive.google.com de tu carpeta (o déjalo vacío para que el script cree la carpeta automáticamente).
             </p>
+            {formData.driveFolderId && formData.driveFolderId.startsWith('AKfycb') && (
+              <div className="p-2 rounded-lg bg-amber-400/10 border border-amber-400/30 text-amber-300 text-[11px] flex items-center justify-between gap-2">
+                <span>⚠️ Este valor es el ID del Webhook. Te recomendamos dejar este campo vacío para que el script cree automáticamente la carpeta en tu Google Drive.</span>
+                <button
+                  type="button"
+                  onClick={() => setFormData((prev) => ({ ...prev, driveFolderId: '' }))}
+                  className="px-2 py-1 rounded bg-amber-400 text-black text-[10px] font-bold shrink-0 cursor-pointer"
+                >
+                  Dejar Vacío
+                </button>
+              </div>
+            )}
           </div>
 
           {/* EDITABLE FIELD 4: Webhook de Google Apps Script */}
@@ -747,6 +917,39 @@ function doGet(e) {
             </div>
             <p className="text-[10px] text-[#8d90a0]">
               La URL de la Web App implementada en tu Google Apps Script (debe terminar en /exec).
+            </p>
+          </div>
+
+          {/* EDITABLE FIELD 5: Alternativa Ultra-Rápida - Enlace Directo a Carpeta Compartida */}
+          <div className="space-y-1.5 p-3.5 rounded-xl bg-gradient-to-r from-[#0b0e15] to-[#121b2d] border border-emerald-500/40">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-white flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-emerald-400 text-[18px]">folder_shared</span>
+                <span>Alternativa Ultra-Rápida: Enlace a Carpeta Compartida de Drive</span>
+              </label>
+              <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/15 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                ⚡ Subida Masiva
+              </span>
+            </div>
+            <p className="text-[11px] text-[#c3c6d7] leading-relaxed">
+              Si deseas que los invitados puedan subir <strong>lotes de 20 o 50 fotos al instante</strong> con la app nativa de Google Drive, crea una carpeta en tu Google Drive, compártela como <em>"Cualquier persona con el enlace puede editar"</em> y pega aquí el enlace:
+            </p>
+            <div className="relative flex items-center">
+              <span className="absolute left-3 text-[#8d90a0]">
+                <span className="material-symbols-outlined text-[17px]">link</span>
+              </span>
+              <input
+                type="url"
+                value={formData.driveDirectFolderUrl || ''}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, driveDirectFolderUrl: e.target.value }))
+                }
+                className="w-full bg-[#191b23] border border-emerald-500/30 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-emerald-300 placeholder-[#8d90a0] focus:outline-none focus:ring-2 focus:ring-emerald-400 font-mono"
+                placeholder="https://drive.google.com/drive/folders/1..."
+              />
+            </div>
+            <p className="text-[10px] text-[#8d90a0]">
+              Al configurar este enlace, aparecerá un botón directo en el álbum para que cualquier invitado abra tu carpeta y suba fotos a máxima velocidad.
             </p>
           </div>
 
@@ -984,14 +1187,108 @@ function doGet(e) {
       </section>
 
       {/* ========================================================================= */}
-      {/* SECCIÓN 6: SEGURIDAD Y CREDENCIALES DEL ADMINISTRADOR                     */}
+      {/* SECCIÓN 6: MODERACIÓN Y GESTIÓN DE FOTOS (EXCLUSIVO ADMINISTRADOR)        */}
+      {/* ========================================================================= */}
+      <section className="space-y-2">
+        <div className="flex items-center justify-between px-1">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-[#7bd0ff] text-[18px]">delete_sweep</span>
+            <h2 className="text-sm font-bold text-white font-serif-gala">
+              6. Moderación y Eliminación de Fotos
+            </h2>
+          </div>
+          <span className="text-[11px] text-rose-300 font-semibold bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/20">
+            Solo Administrador
+          </span>
+        </div>
+
+        <div className="glass-card rounded-2xl p-4 space-y-3.5 border border-white/10">
+          <div className="p-3 rounded-xl bg-[#0b0e15]/80 border border-emerald-400/30 text-emerald-300 text-xs flex items-start gap-2">
+            <span className="material-symbols-outlined text-base mt-0.5 shrink-0">verified_user</span>
+            <p className="leading-snug">
+              <strong>Protección activa:</strong> Los invitados tienen bloqueada la opción de eliminar fotos. Solo tú como administrador puedes borrar fotos inapropiadas o repetidas aquí o en el Muro en Vivo.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-[#c3c6d7] font-semibold">
+              Total de fotos activas: {memories.length}
+            </span>
+            <button
+              type="button"
+              onClick={handleDownloadAllMemories}
+              className="text-[11px] text-[#7bd0ff] hover:underline flex items-center gap-1 cursor-pointer font-medium"
+            >
+              <span className="material-symbols-outlined text-xs">download</span>
+              <span>Descargar copia de seguridad</span>
+            </button>
+          </div>
+
+          {memories.length === 0 ? (
+            <p className="text-xs text-[#8d90a0] py-4 text-center italic">
+              Aún no hay fotos subidas por los invitados.
+            </p>
+          ) : (
+            <div className="max-h-72 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+              {memories.map((m) => (
+                <div
+                  key={m.id}
+                  className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-[#0b0e15] border border-white/5 hover:border-white/15 transition-colors"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <img
+                      src={m.image}
+                      alt={m.author}
+                      className="w-12 h-12 rounded-lg object-cover shrink-0 border border-white/10"
+                    />
+                    <div className="min-w-0 text-left">
+                      <p className="text-xs font-bold text-white truncate">{m.author}</p>
+                      <p className="text-[10px] text-[#8d90a0] truncate">
+                        {m.table} • {m.time}
+                      </p>
+                      {m.message && (
+                        <p className="text-[10px] text-[#c3c6d7] italic truncate max-w-[200px]">
+                          "{m.message}"
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {onDeleteMemory && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            `¿Seguro que deseas eliminar definitivamente la foto de "${m.author}"?`
+                          )
+                        ) {
+                          onDeleteMemory(m.id);
+                        }
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500 text-rose-300 hover:text-white border border-rose-500/30 text-xs font-bold transition-all flex items-center gap-1 shrink-0 cursor-pointer"
+                      title="Eliminar foto"
+                    >
+                      <span className="material-symbols-outlined text-sm">delete</span>
+                      <span>Eliminar</span>
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* ========================================================================= */}
+      {/* SECCIÓN 7: SEGURIDAD Y CREDENCIALES DEL ADMINISTRADOR                     */}
       {/* ========================================================================= */}
       <section className="space-y-2">
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-[#7bd0ff] text-[18px]">lock</span>
             <h2 className="text-sm font-bold text-white font-serif-gala">
-              6. Seguridad y Credenciales de Acceso
+              7. Seguridad y Credenciales de Acceso
             </h2>
           </div>
           <span className="text-[11px] text-amber-300 font-semibold bg-amber-400/10 px-2 py-0.5 rounded-full border border-amber-400/20">
