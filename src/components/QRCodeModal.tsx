@@ -56,9 +56,17 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({
           />
           {/* Center Gala Monogram Badge */}
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="w-10 h-10 rounded-full bg-[#10131a] border-2 border-[#2563eb] flex items-center justify-center shadow-lg">
-              <span className="font-serif-gala text-xs font-bold text-[#7bd0ff]">V15</span>
-            </div>
+            {eventSettings.customLogoUrl ? (
+              <img
+                src={eventSettings.customLogoUrl}
+                alt="Logo"
+                className="w-10 h-10 rounded-full object-cover border-2 border-[#2563eb] shadow-lg"
+              />
+            ) : (
+              <div className="w-10 h-10 rounded-full bg-[#10131a] border-2 border-[#2563eb] flex items-center justify-center shadow-lg">
+                <span className="font-serif-gala text-xs font-bold text-[#7bd0ff]">B15</span>
+              </div>
+            )}
           </div>
         </div>
 

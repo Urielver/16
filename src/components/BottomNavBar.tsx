@@ -4,9 +4,14 @@ import { TabType } from '../types';
 interface BottomNavBarProps {
   currentTab: TabType;
   onNavigate: (tab: TabType) => void;
+  isAdminAuthenticated?: boolean;
 }
 
-export const BottomNavBar: React.FC<BottomNavBarProps> = ({ currentTab, onNavigate }) => {
+export const BottomNavBar: React.FC<BottomNavBarProps> = ({
+  currentTab,
+  onNavigate,
+  isAdminAuthenticated = false,
+}) => {
   // Hide on proyector mode (which is full-screen TV view)
   if (currentTab === 'proyector') {
     return null;
@@ -15,9 +20,14 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({ currentTab, onNaviga
   const tabs: { id: TabType; label: string; icon: string }[] = [
     { id: 'inicio', label: 'Inicio', icon: 'celebration' },
     { id: 'camara', label: 'Cámara', icon: 'photo_camera' },
-    { id: 'recuerdos', label: 'Recuerdos', icon: 'auto_stories' },
-    { id: 'album', label: 'Álbum', icon: 'cloud_done' },
+    { id: 'album', label: 'Álbum', icon: 'photo_library' },
+    { id: 'envivo', label: 'En Vivo', icon: 'tv' },
   ];
+
+  // La solapa de Administración aparece únicamente cuando se ha iniciado sesión
+  if (isAdminAuthenticated) {
+    tabs.push({ id: 'ajustes', label: 'Admin', icon: 'admin_panel_settings' });
+  }
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 flex justify-around items-center max-w-[480px] mx-auto px-3 py-2 pb-5 bg-[#10131a]/90 backdrop-blur-xl shadow-[0_-8px_30px_rgba(0,0,0,0.65)] border-t border-white/5">

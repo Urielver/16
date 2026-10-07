@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
 import { CelebrationType, EventSettings, Memory, TabType } from '../../types';
+import { downloadMemoriesAsZip } from '../../utils/zipDownload';
+import { saveMemoryToCloud, saveSettingsToCloud } from '../../utils/firestoreService';
+import { compressImage } from '../../utils/imageCompressor';
 
 interface SettingsScreenProps {
   eventSettings: EventSettings;
@@ -22,20 +25,55 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 }) => {
   const [formData, setFormData] = useState<EventSettings>(() => ({
     ...eventSettings,
-    driveFolderId:
-      eventSettings.driveFolderId && !eventSettings.driveFolderId.startsWith('AKfycb')
-        ? eventSettings.driveFolderId
-        : '1bHI5-NkaB7LBEeTD_wOZ-_nfcuTOLYrt',
-    driveDirectFolderUrl:
-      eventSettings.driveDirectFolderUrl ||
-      'https://drive.google.com/drive/folders/1bHI5-NkaB7LBEeTD_wOZ-_nfcuTOLYrt',
+    storageMethod: eventSettings.storageMethod || 'cloud_firestore',
   }));
+
+  // Mantener formData actualizado si las configuraciones del evento se actualizan externamente
+  React.useEffect(() => {
+    if (
+      eventSettings.settingsUpdatedAt &&
+      (!formData.settingsUpdatedAt || eventSettings.settingsUpdatedAt > formData.settingsUpdatedAt)
+    ) {
+      setFormData((prev) => ({
+        ...prev,
+        ...eventSettings,
+      }));
+    }
+  }, [eventSettings]);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [saveMessage, setSaveMessage] = useState<string>('Todos los cambios sincronizados');
   const [showAdminPassword, setShowAdminPassword] = useState<boolean>(false);
+  const [isCloudSyncing, setIsCloudSyncing] = useState<boolean>(false);
+  const [cloudSyncMsg, setCloudSyncMsg] = useState<string>('');
+  const [isZipping, setIsZipping] = useState<boolean>(false);
+  const [zipProgress, setZipProgress] = useState<string>('');
+  const [showDriveInstructions, setShowDriveInstructions] = useState<boolean>(false);
   const [testDriveStatus, setTestDriveStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testDriveMessage, setTestDriveMessage] = useState<string>('');
-  const [showDriveInstructions, setShowDriveInstructions] = useState<boolean>(false);
+
+  const handleAutoGenerateFolder = () => {
+    const folder = `Mis 15 ${formData.honoreeName || 'Bianca'} - Fotos en Vivo`;
+    setFormData((prev) => ({ ...prev, driveFolder: folder }));
+  };
+
+  const handleTestDriveConnection = async () => {
+    if (!formData.driveWebhookUrl) {
+      setTestDriveStatus('error');
+      setTestDriveMessage('Debes pegar primero la URL de tu Webhook de Google Apps Script.');
+      return;
+    }
+    setTestDriveStatus('testing');
+    setTestDriveMessage('Probando conexión con Google Drive...');
+    try {
+      await fetch(formData.driveWebhookUrl, { method: 'GET', mode: 'no-cors' });
+      setTestDriveStatus('success');
+      setTestDriveMessage('¡Conexión establecida con éxito con tu Google Drive!');
+      setTimeout(() => setTestDriveMessage(''), 4000);
+    } catch {
+      setTestDriveStatus('error');
+      setTestDriveMessage('No se pudo conectar con el Webhook. Revisa los permisos en Google Apps Script.');
+    }
+  };
 
   const defaultCoverPhoto =
     'https://lh3.googleusercontent.com/aida-public/AB6AXuAowa0QMnNmb_1oTuH7ZOk8q6iAM-lTcaSNdpAnbnq7kYzUgmA8fOOEsAEOFARvnQaibJg0qXzwbmre302mdeKRiSs3Ti4g91q7TsWSkKY3oy7iflNQamMV80IVpgubltRGIMjyPLA6DWl_JFQi5sf92FQuXDamwSPta2LaldeW8KXkpxtPIoChcgwncDh9qZK9FrKnvVOMThrU-xHmGPB6LKCOlanqU-dtngxmWi2MHOWpg2loatUJ_A';
@@ -49,94 +87,138 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
   const handleSave = () => {
     setIsSaving(true);
+    const updated = {
+      ...formData,
+      settingsUpdatedAt: Date.now(),
+    };
+    setFormData(updated);
+
+    saveSettingsToCloud(updated).catch((err) => {
+      console.warn('Could not save to Cloud Firestore:', err);
+    });
+
+    fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updated),
+    }).catch(() => {});
+
     setTimeout(() => {
-      onUpdateSettings(formData);
+      onUpdateSettings(updated);
       setIsSaving(false);
-      setSaveMessage('¡Guardado con éxito!');
+      setSaveMessage('¡Guardado en Google Cloud y Servidor!');
       setTimeout(() => {
         setSaveMessage('Todos los cambios sincronizados');
       }, 2500);
-    }, 500);
+    }, 350);
   };
 
-  const handleCoverPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleCoverPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          setFormData((prev) => ({
-            ...prev,
-            coverImage: event.target?.result as string,
-          }));
+      try {
+        setIsSaving(true);
+        setSaveMessage('Optimizando y guardando foto de presentación...');
+        const compressed = await compressImage(file, 960, 960, 0.75);
+        if (compressed) {
+          const updated = {
+            ...formData,
+            coverImage: compressed,
+            settingsUpdatedAt: Date.now(),
+          };
+          setFormData(updated);
+          onUpdateSettings(updated);
+          try {
+            localStorage.setItem('mis15_settings', JSON.stringify(updated));
+          } catch {}
+          await saveSettingsToCloud(updated);
+          fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updated),
+          }).catch(() => {});
+          setSaveMessage('¡Foto de presentación guardada y sincronizada permanentemente!');
+          setTimeout(() => setSaveMessage('Todos los cambios sincronizados'), 3000);
         }
-      };
-      reader.readAsDataURL(file);
+      } catch (err) {
+        console.warn('Error reading cover photo:', err);
+        setSaveMessage('Error al procesar la foto');
+      } finally {
+        setIsSaving(false);
+      }
     }
   };
 
   const handleRemoveCoverPhoto = () => {
     if (window.confirm('¿Seguro que deseas eliminar la foto de presentación de la portada?')) {
-      setFormData((prev) => ({ ...prev, coverImage: '' }));
+      const updated = { ...formData, coverImage: '', settingsUpdatedAt: Date.now() };
+      setFormData(updated);
+      onUpdateSettings(updated);
+      saveSettingsToCloud(updated).catch(() => {});
     }
   };
 
   const handleRestoreDefaultCover = () => {
-    setFormData((prev) => ({ ...prev, coverImage: defaultCoverPhoto }));
+    const updated = { ...formData, coverImage: defaultCoverPhoto, settingsUpdatedAt: Date.now() };
+    setFormData(updated);
+    onUpdateSettings(updated);
+    saveSettingsToCloud(updated).catch(() => {});
   };
 
-  const handleAutoGenerateFolder = () => {
-    const firstName = formData.honoreeName.split(' ')[0] || 'Valentina';
-    const autoFolder = `Drive / Mis 15 ${firstName} / Fotos en Vivo`;
-    setFormData((prev) => ({ ...prev, driveFolder: autoFolder }));
-  };
-
-  // Test real Google Drive webhook connection
-  const handleTestDriveConnection = async () => {
-    if (!formData.driveWebhookUrl || formData.driveWebhookUrl.includes('TU_EJECUTABLE_AQUI')) {
-      setTestDriveStatus('error');
-      setTestDriveMessage(
-        '⚠️ Debes ingresar una URL de Webhook válida de Google Apps Script (termina en /exec) antes de probar.'
-      );
-      return;
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      try {
+        const compressed = await compressImage(file, 500, 500, 0.85);
+        if (compressed) {
+          const updated = {
+            ...formData,
+            customLogoUrl: compressed,
+            settingsUpdatedAt: Date.now(),
+          };
+          setFormData(updated);
+          onUpdateSettings(updated);
+          saveSettingsToCloud(updated).catch(() => {});
+          fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updated),
+          }).catch(() => {});
+        }
+      } catch (err) {
+        console.warn('Error reading logo:', err);
+      }
     }
+  };
 
-    setTestDriveStatus('testing');
-    setTestDriveMessage('Enviando solicitud de prueba a tu Google Drive...');
+  const handleSongUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const url = URL.createObjectURL(file);
+      const title = file.name.replace(/\.[^/.]+$/, '');
+      setFormData((prev) => ({
+        ...prev,
+        backgroundSongUrl: url,
+        backgroundSongTitle: title,
+      }));
+    }
+  };
 
+  // Sincronizar todas las fotos del evento con Google Cloud Firestore
+  const handleSyncAllToGoogleCloud = async () => {
+    if (memories.length === 0) return;
+    setIsCloudSyncing(true);
+    setCloudSyncMsg('Sincronizando fotos con Google Cloud Firestore...');
     try {
-      const cleanFolderId =
-        formData.driveFolderId && !formData.driveFolderId.startsWith('AKfycb')
-          ? formData.driveFolderId.trim()
-          : '1bHI5-NkaB7LBEeTD_wOZ-_nfcuTOLYrt';
-
-      const testPayload = {
-        test: true,
-        nombre: 'Prueba de Conexión',
-        mesa: 'Mesa Admin',
-        dedicatoria: 'Verificación de sincronización con Google Drive',
-        folderId: cleanFolderId,
-        folderName: formData.driveFolder || 'Mis 15 Valentina - Fotos en Vivo',
-        email: formData.driveAccount || 'carlosvargasotorgues@gmail.com',
-        image:
-          'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
-        mimeType: 'image/png',
-      };
-
-      await fetch(formData.driveWebhookUrl, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(testPayload),
-      });
-
-      setTestDriveStatus('success');
-      setTestDriveMessage(
-        '✅ Solicitud enviada correctamente a tu Webhook. El script creará o ubicará la carpeta "Mis 15 Valentina - Fotos en Vivo" en tu Google Drive.'
-      );
-    } catch (err) {
-      setTestDriveStatus('error');
-      setTestDriveMessage(`❌ Error de conexión: ${String(err)}`);
+      for (const mem of memories) {
+        await saveMemoryToCloud(mem);
+      }
+      setCloudSyncMsg(`¡${memories.length} fotos guardadas y sincronizadas en Google Cloud!`);
+      setTimeout(() => setCloudSyncMsg(''), 3500);
+    } catch (e) {
+      setCloudSyncMsg('Error al sincronizar con Google Cloud.');
+    } finally {
+      setIsCloudSyncing(false);
     }
   };
 
@@ -173,9 +255,9 @@ function doPost(e) {
       }
     }
 
-    // Si no hay carpeta por ID, buscar o crear la carpeta "Mis 15 Valentina - Fotos en Vivo"
+    // Si no hay carpeta por ID, buscar o crear la carpeta "Mis 15 Bianca - Fotos en Vivo"
     if (!folder) {
-      const folderName = (data.folderName || "Mis 15 Valentina - Fotos en Vivo").replace(/^Drive\\s*\\/\\s*/i, "").trim() || "Mis 15 Valentina - Fotos";
+      const folderName = (data.folderName || "Mis 15 Bianca - Fotos en Vivo").replace(/^Drive\\s*\\/\\s*/i, "").trim() || "Mis 15 Bianca - Fotos";
       const folders = DriveApp.getFoldersByName(folderName);
       if (folders.hasNext()) {
         folder = folders.next();
@@ -234,6 +316,32 @@ function doGet(e) {
 
     navigator.clipboard?.writeText(scriptCode);
     alert('¡Código de Google Apps Script copiado al portapapeles! Pégalo en tu proyecto de script.google.com, haz clic en Implementar > Nueva implementación y actualízalo.');
+  };
+
+  // Descarga directa de todas las fotos en un archivo ZIP sin necesidad de Drive
+  const handleDownloadZip = async () => {
+    if (memories.length === 0) {
+      alert('Aún no hay fotos registradas para descargar.');
+      return;
+    }
+    setIsZipping(true);
+    setZipProgress('Iniciando empaquetado...');
+    try {
+      await downloadMemoriesAsZip(
+        memories,
+        formData.eventName || 'Mis 15 Bianca',
+        (current, total) => {
+          setZipProgress(`Empaquetando foto ${current} de ${total}...`);
+        }
+      );
+      setZipProgress('¡Descarga de archivo ZIP completada!');
+      setTimeout(() => setZipProgress(''), 3500);
+    } catch (err) {
+      console.error('Error generando archivo ZIP:', err);
+      alert('Hubo un inconveniente al generar el ZIP. Puedes usar la descarga JSON de respaldo.');
+    } finally {
+      setIsZipping(false);
+    }
   };
 
   // Download all memories as JSON backup
@@ -369,7 +477,7 @@ function doGet(e) {
                   }));
                 }}
                 className="w-full bg-[#0b0e15]/90 border border-white/15 rounded-xl pl-9 pr-3.5 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-[#7bd0ff]/70 transition-all font-sans-ui"
-                placeholder="ej. Valentina Méndez"
+                placeholder="ej. Bianca Vargas"
               />
             </div>
           </div>
@@ -388,7 +496,7 @@ function doGet(e) {
                 value={formData.eventName}
                 onChange={(e) => setFormData((prev) => ({ ...prev, eventName: e.target.value }))}
                 className="w-full bg-[#0b0e15]/90 border border-white/15 rounded-xl pl-9 pr-3.5 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-[#7bd0ff]/70 transition-all font-sans-ui"
-                placeholder="ej. Mis 15 Valentina"
+                placeholder="ej. Mis 15 Bianca"
               />
             </div>
           </div>
@@ -637,23 +745,378 @@ function doGet(e) {
       </section>
 
       {/* ========================================================================= */}
-      {/* SECCIÓN 3: DESTINO DE FOTOS (GOOGLE DRIVE Y CORREO)                       */}
+      {/* SECCIÓN 2: LOGO OFICIAL DEL EVENTO (IMAGEN PERSONALIZADA O B15)           */}
       {/* ========================================================================= */}
       <section className="space-y-2">
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-[#7bd0ff] text-[18px]">cloud_sync</span>
-            <h2 className="text-sm font-bold text-white font-serif-gala">
-              3. Destino de Fotos (Google Drive y Correo)
-            </h2>
+            <span className="material-symbols-outlined text-[#7bd0ff] text-[18px]">verified</span>
+            <h2 className="text-sm font-bold text-white font-serif-gala">2. Logo Oficial del Evento</h2>
           </div>
-          <span className="px-2 py-0.5 rounded-full bg-[#2563eb]/30 text-[#7bd0ff] border border-[#7bd0ff]/30 text-[10px] font-bold">
-            Configurable
+          <span className="text-[11px] text-[#7bd0ff] bg-[#2563eb]/20 px-2 py-0.5 rounded-full border border-[#7bd0ff]/20 font-medium">
+            Personalizable
           </span>
         </div>
 
-        <div className="glass-card rounded-2xl p-4 space-y-4 border border-[#7bd0ff]/40 shadow-xl bg-gradient-to-b from-[#191b23] to-[#121622]">
-          {/* Explicación de por qué no se guardaban las fotos */}
+        <div className="glass-card rounded-2xl p-4 space-y-3.5 border border-white/10 text-left">
+          {/* Vista previa del Logo Actual */}
+          <div className="flex items-center gap-4 p-3 bg-[#0b0e15]/90 rounded-2xl border border-white/10">
+            <div className="relative">
+              {formData.customLogoUrl ? (
+                <img
+                  src={formData.customLogoUrl}
+                  alt="Logo Personalizado"
+                  className="w-16 h-16 rounded-2xl object-cover border-2 border-[#7bd0ff] shadow-lg shadow-blue-500/20"
+                />
+              ) : (
+                <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-[#2563eb] to-[#38bdf8] flex items-center justify-center text-white font-serif-gala font-bold text-xl shadow-lg shadow-blue-500/30 border border-white/20">
+                  B15
+                </div>
+              )}
+            </div>
+
+            <div className="flex-1 min-w-0">
+              <h4 className="text-xs font-bold text-white">
+                {formData.customLogoUrl ? 'Logo Personalizado Activo' : 'Logo Predeterminado (B15)'}
+              </h4>
+              <p className="text-[11px] text-[#8d90a0] leading-snug mt-0.5">
+                Este logo se proyecta en la barra superior, la cámara y la pantalla en vivo del evento.
+              </p>
+            </div>
+          </div>
+
+          {/* Botones para Subir Imagen o Restablecer */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <label className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl border border-[#7bd0ff]/40 bg-[#7bd0ff]/10 hover:bg-[#7bd0ff]/20 text-[#7bd0ff] text-xs font-bold cursor-pointer active:scale-[0.98] transition-all">
+              <span className="material-symbols-outlined text-[18px]">add_photo_alternate</span>
+              <span>Subir Imagen de Logo</span>
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleLogoUpload}
+              />
+            </label>
+
+            {formData.customLogoUrl ? (
+              <button
+                type="button"
+                onClick={() => setFormData((prev) => ({ ...prev, customLogoUrl: '' }))}
+                className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl border border-white/20 bg-white/5 hover:bg-white/10 text-white text-xs font-semibold cursor-pointer active:scale-[0.98] transition-all"
+              >
+                <span className="material-symbols-outlined text-[18px] text-[#7bd0ff]">refresh</span>
+                <span>Restablecer a B15</span>
+              </button>
+            ) : null}
+          </div>
+
+          {/* O Ingresar URL de Imagen directa */}
+          <div className="space-y-1">
+            <label className="text-[11px] font-medium text-[#c3c6d7] block">
+              O ingresa la URL directa de la imagen de tu logo
+            </label>
+            <div className="relative flex items-center">
+              <span className="absolute left-3 text-[#8d90a0]">
+                <span className="material-symbols-outlined text-[16px]">link</span>
+              </span>
+              <input
+                type="url"
+                value={formData.customLogoUrl || ''}
+                onChange={(e) => setFormData((prev) => ({ ...prev, customLogoUrl: e.target.value }))}
+                placeholder="https://ejemplo.com/mi-logo.png"
+                className="w-full bg-[#0b0e15]/90 border border-white/15 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-[#8d90a0] focus:outline-none focus:ring-2 focus:ring-[#7bd0ff]"
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ========================================================================= */}
+      {/* SECCIÓN 2.1: MÚSICA DE LA FIESTA / SUBIR CANCIÓN PARA REPRODUCIR          */}
+      {/* ========================================================================= */}
+      <section className="space-y-2">
+        <div className="flex items-center justify-between px-1">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-[#7bd0ff] text-[18px]">music_note</span>
+            <h2 className="text-sm font-bold text-white font-serif-gala">Música de la Fiesta</h2>
+          </div>
+          <span className="text-[11px] text-[#7bd0ff] bg-[#2563eb]/20 px-2 py-0.5 rounded-full border border-[#7bd0ff]/20 font-medium">
+            Reproductor Activo
+          </span>
+        </div>
+
+        <div className="glass-card rounded-2xl p-4 space-y-3.5 border border-white/10 text-left">
+          <div className="p-3 bg-[#0b0e15]/90 rounded-2xl border border-white/10 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-8 h-8 rounded-full bg-[#2563eb]/30 text-[#7bd0ff] flex items-center justify-center">
+                  <span className="material-symbols-outlined text-base">graphic_eq</span>
+                </span>
+                <div>
+                  <h4 className="text-xs font-bold text-white">
+                    {formData.backgroundSongTitle || 'Canción de Fondo'}
+                  </h4>
+                  <p className="text-[10px] text-[#8d90a0]">Canción que se escucha en la fiesta</p>
+                </div>
+              </div>
+            </div>
+
+            {formData.backgroundSongUrl && (
+              <audio
+                controls
+                src={formData.backgroundSongUrl}
+                className="w-full h-8 mt-2"
+              />
+            )}
+          </div>
+
+          {/* Subir Canción MP3 o Audio */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <label className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl border border-[#7bd0ff]/40 bg-[#7bd0ff]/10 hover:bg-[#7bd0ff]/20 text-[#7bd0ff] text-xs font-bold cursor-pointer active:scale-[0.98] transition-all">
+              <span className="material-symbols-outlined text-[18px]">upload</span>
+              <span>Subir Canción (MP3 / Audio)</span>
+              <input
+                type="file"
+                accept="audio/*"
+                className="hidden"
+                onChange={handleSongUpload}
+              />
+            </label>
+
+            <button
+              type="button"
+              onClick={() =>
+                setFormData((prev) => ({
+                  ...prev,
+                  backgroundSongUrl:
+                    'https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=waltz-of-the-flowers-tchaikovsky-114251.mp3',
+                  backgroundSongTitle: 'Vals de Gala - Mis 15 Bianca',
+                }))
+              }
+              className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl border border-white/20 bg-white/5 hover:bg-white/10 text-white text-xs font-semibold cursor-pointer active:scale-[0.98] transition-all"
+            >
+              <span className="material-symbols-outlined text-[18px] text-[#7bd0ff]">refresh</span>
+              <span>Restablecer Vals</span>
+            </button>
+          </div>
+
+          {/* Título de la canción */}
+          <div className="space-y-1">
+            <label className="text-[11px] font-medium text-[#c3c6d7] block">
+              Nombre de la Canción
+            </label>
+            <input
+              type="text"
+              value={formData.backgroundSongTitle || ''}
+              onChange={(e) =>
+                setFormData((prev) => ({ ...prev, backgroundSongTitle: e.target.value }))
+              }
+              placeholder="ej. Vals de Quinceañera - Bianca"
+              className="w-full bg-[#0b0e15]/90 border border-white/15 rounded-xl px-3 py-2 text-xs text-white placeholder-[#8d90a0] focus:outline-none focus:ring-2 focus:ring-[#7bd0ff]"
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* ========================================================================= */}
+      {/* SECCIÓN 3: ALMACENAMIENTO DE FOTOS Y RESPALDO (ELIGE TU MÉTODO SIN DRIVE) */}
+      {/* ========================================================================= */}
+      <section className="space-y-2">
+        <div className="flex items-center justify-between px-1">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-amber-400 text-[18px]">cloud_sync</span>
+            <h2 className="text-sm font-bold text-white font-serif-gala">
+              3. Almacenamiento y Respaldo de Fotos
+            </h2>
+          </div>
+          <span className="px-2 py-0.5 rounded-full bg-[#2563eb]/20 text-[#7bd0ff] border border-[#7bd0ff]/30 text-[10px] font-bold">
+            {formData.storageMethod === 'drive'
+              ? 'GOOGLE DRIVE'
+              : formData.storageMethod === 'app_local'
+              ? 'SERVIDOR LOCAL'
+              : 'GOOGLE CLOUD'}
+          </span>
+        </div>
+
+        <div className="glass-card rounded-2xl p-4 space-y-4 border border-white/10 shadow-xl bg-gradient-to-b from-[#191b23] to-[#121622]">
+          {/* Selector de Método de Almacenamiento */}
+          <div className="space-y-2">
+            <label className="text-xs font-semibold text-white block">
+              Selecciona cómo prefieres guardar las fotos de los invitados:
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {/* Opción 1: Google Cloud Firestore */}
+              <button
+                type="button"
+                onClick={() => setFormData((prev) => ({ ...prev, storageMethod: 'cloud_firestore' }))}
+                className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-1.5 ${
+                  formData.storageMethod === 'cloud_firestore' || !formData.storageMethod
+                    ? 'bg-amber-400/20 border-amber-400 text-white shadow-[0_0_15px_rgba(245,158,11,0.25)]'
+                    : 'bg-[#0b0e15]/70 border-white/10 text-[#8d90a0] hover:border-white/30'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="material-symbols-outlined text-lg text-amber-400">cloud_done</span>
+                  <span className="text-[9px] font-bold text-amber-300 bg-amber-400/20 px-1.5 py-0.5 rounded">
+                    EN VIVO
+                  </span>
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-white">1. Google Cloud</p>
+                  <p className="text-[10px] text-[#8d90a0] leading-tight">Firestore Cloud Database en tiempo real</p>
+                </div>
+              </button>
+
+              {/* Opción 2: Google Drive */}
+              <button
+                type="button"
+                onClick={() => setFormData((prev) => ({ ...prev, storageMethod: 'drive' }))}
+                className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-1.5 ${
+                  formData.storageMethod === 'drive'
+                    ? 'bg-[#2563eb]/25 border-[#7bd0ff] text-white shadow-[0_0_15px_rgba(56,189,248,0.25)]'
+                    : 'bg-[#0b0e15]/70 border-white/10 text-[#8d90a0] hover:border-white/30'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="material-symbols-outlined text-lg text-[#7bd0ff]">folder_shared</span>
+                  <span className="text-[9px] font-bold text-[#7bd0ff] bg-[#2563eb]/20 px-1.5 py-0.5 rounded">
+                    DRIVE
+                  </span>
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-white">2. Google Drive</p>
+                  <p className="text-[10px] text-[#8d90a0] leading-tight">Con Script y Carpeta de Drive</p>
+                </div>
+              </button>
+
+              {/* Opción 3: Servidor Local + ZIP */}
+              <button
+                type="button"
+                onClick={() => setFormData((prev) => ({ ...prev, storageMethod: 'app_local' }))}
+                className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-1.5 col-span-2 sm:col-span-1 ${
+                  formData.storageMethod === 'app_local'
+                    ? 'bg-emerald-500/20 border-emerald-400 text-white shadow-[0_0_15px_rgba(16,185,129,0.25)]'
+                    : 'bg-[#0b0e15]/70 border-white/10 text-[#8d90a0] hover:border-white/30'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="material-symbols-outlined text-lg text-emerald-400">folder_zip</span>
+                  <span className="text-[9px] font-bold text-emerald-300 bg-emerald-500/20 px-1.5 py-0.5 rounded">
+                    ZIP DIRECTO
+                  </span>
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-white">3. Servidor + ZIP</p>
+                  <p className="text-[10px] text-[#8d90a0] leading-tight">Sin cuentas externas, descarga ZIP</p>
+                </div>
+              </button>
+            </div>
+          </div>
+
+          {/* PANEL: GOOGLE CLOUD FIRESTORE + DESCARGA ZIP */}
+          {(formData.storageMethod === 'cloud_firestore' || formData.storageMethod === 'app_local' || !formData.storageMethod) && (
+            <div className="space-y-3.5 p-4 rounded-xl bg-[#0b0e15]/90 border border-amber-400/40 animate-in fade-in duration-200 shadow-[0_0_20px_rgba(245,158,11,0.15)]">
+              <div className="flex items-start gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-amber-400/20 border border-amber-400/30 flex items-center justify-center text-amber-400 shrink-0">
+                  <span className="material-symbols-outlined text-lg">cloud_done</span>
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-amber-300">
+                      Método Activo: Almacenamiento en Google Cloud (Firestore)
+                    </h4>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[9px] font-bold flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                      Cloud Online
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#c3c6d7] leading-relaxed mt-0.5">
+                    Todas las fotos tomadas por los invitados se guardan de forma instantánea en <strong>Google Cloud Firestore</strong>. Se sincronizan en vivo entre todos los celulares y la Pantalla Gigante sin necesidad de Google Drive ni contraseñas.
+                  </p>
+                  <div className="flex items-center gap-2 mt-2 text-[10px] text-[#8d90a0] font-mono">
+                    <span className="px-2 py-0.5 rounded bg-white/5 border border-white/10">
+                      Proyecto: unified-saga-8cb1c
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-white/5 border border-white/10">
+                      BD: ai-studio-mis15...
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Toggle Auto-descarga en el celular del invitado */}
+              <label className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10 cursor-pointer hover:bg-white/10 transition-colors">
+                <div className="space-y-0.5 pr-2">
+                  <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[16px] text-[#7bd0ff]">download_for_offline</span>
+                    <span>Descarga automática en la galería del celular del invitado</span>
+                  </p>
+                  <p className="text-[10px] text-[#8d90a0]">
+                    Al pulsar &quot;Publicar&quot;, la foto también se descargará al carrete de fotos del teléfono del invitado.
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={formData.autoDownloadToDevice || false}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, autoDownloadToDevice: e.target.checked }))}
+                  className="w-4 h-4 accent-emerald-400 cursor-pointer shrink-0"
+                />
+              </label>
+
+              {/* Botón de descarga de archivo ZIP completo */}
+              <div className="p-3.5 rounded-xl bg-white/5 border border-white/10 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-emerald-400 text-[18px]">folder_zip</span>
+                    <span>Descarga de Fotos en Archivo ZIP</span>
+                  </span>
+                  <span className="text-[10px] text-[#7bd0ff] font-mono font-bold bg-[#7bd0ff]/10 px-2 py-0.5 rounded border border-[#7bd0ff]/20">
+                    {memories.length} fotos listas
+                  </span>
+                </div>
+                <p className="text-[11px] text-[#8d90a0]">
+                  Al pulsar este botón, la aplicación empaqueta todas las fotos originales tomadas en la fiesta con el nombre de cada invitado y mesa en un archivo comprimido .ZIP listo para guardar en tu pendrive o computadora.
+                </p>
+
+                <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleDownloadZip}
+                    disabled={isZipping || memories.length === 0}
+                    className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 text-black font-bold text-xs shadow-lg hover:shadow-emerald-500/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                  >
+                    {isZipping ? (
+                      <>
+                        <span className="material-symbols-outlined text-base animate-spin">sync</span>
+                        <span>{zipProgress || 'Generando ZIP...'}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="material-symbols-outlined text-base">download</span>
+                        <span>Descargar Álbum Completo en ZIP ({memories.length} fotos)</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleDownloadAllMemories}
+                    disabled={memories.length === 0}
+                    className="py-3 px-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-medium text-xs border border-white/10 flex items-center justify-center gap-1.5 active:scale-95 transition-all cursor-pointer disabled:opacity-60"
+                    title="Descargar copia de seguridad en formato JSON"
+                  >
+                    <span className="material-symbols-outlined text-sm text-[#7bd0ff]">data_object</span>
+                    <span>Respaldo JSON</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* PANEL 3: GOOGLE DRIVE (OPCIONAL) */}
+          {formData.storageMethod === 'drive' && (
+            <div className="space-y-4 pt-2 border-t border-white/10 animate-in fade-in duration-200">
+              {/* Explicación de por qué no se guardaban las fotos */}
           <div className="p-3.5 rounded-xl bg-[#0b0e15]/90 border border-amber-400/30 text-amber-200 text-xs leading-relaxed space-y-1.5">
             <div className="flex items-center gap-1.5 font-bold text-amber-300">
               <span className="material-symbols-outlined text-lg">info</span>
@@ -780,7 +1243,7 @@ function doGet(e) {
               <div className="p-2.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 flex items-center gap-2">
                 <span className="material-symbols-outlined text-lg shrink-0">check_circle</span>
                 <span className="text-[11px] font-medium">
-                  ¡Listo! Haz clic abajo en <strong>"Probar Conexión con mi Google Drive"</strong> y verás la carpeta <strong>"Mis 15 Valentina - Fotos en Vivo"</strong> en tu Google Drive.
+                  ¡Listo! Haz clic abajo en <strong>"Probar Conexión con mi Google Drive"</strong> y verás la carpeta <strong>"Mis 15 Bianca - Fotos en Vivo"</strong> en tu Google Drive.
                 </span>
               </div>
             </div>
@@ -844,7 +1307,7 @@ function doGet(e) {
                   setFormData((prev) => ({ ...prev, driveFolder: e.target.value }))
                 }
                 className="w-full bg-[#191b23] border border-white/20 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white placeholder-[#8d90a0] focus:outline-none focus:ring-2 focus:ring-[#7bd0ff] transition-all font-mono"
-                placeholder="Drive / Mis 15 Valentina / Fotos en Vivo"
+                placeholder="Drive / Mis 15 Bianca / Fotos en Vivo"
               />
             </div>
             <p className="text-[10px] text-[#8d90a0]">
@@ -983,6 +1446,8 @@ function doGet(e) {
               </div>
             )}
           </div>
+        </div>
+      )}
 
           {/* Permisos & Moderation Switches */}
           <div className="space-y-3 pt-2 border-t border-white/10">

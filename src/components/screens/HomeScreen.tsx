@@ -1,5 +1,5 @@
-import React, { useRef, useState } from 'react';
-import { EventSettings, Memory, TabType } from '../../types';
+import React, { useRef } from 'react';
+import { EventSettings, TabType, Memory, OnlineGuest } from '../../types';
 
 interface HomeScreenProps {
   eventSettings: EventSettings;
@@ -7,8 +7,13 @@ interface HomeScreenProps {
   guestTable: string;
   onUpdateGuest: (name: string, table: string) => void;
   onNavigate: (tab: TabType) => void;
-  onSelectPhotoForPreview: (photoBase64: string) => void;
+  onSelectPhotoForPreview: (photoBase64: string, videoData?: { url: string; duration: number }) => void;
   memories: Memory[];
+  onlineGuests?: OnlineGuest[];
+  isAdminAuthenticated?: boolean;
+  onOpenAdminLogin?: () => void;
+  onOpenPlaylist?: () => void;
+  playlistCount?: number;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
@@ -19,21 +24,45 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   onNavigate,
   onSelectPhotoForPreview,
   memories,
+  isAdminAuthenticated = false,
+  onOpenAdminLogin,
+  onOpenPlaylist,
+  playlistCount = 0,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [selectedMemory, setSelectedMemory] = useState<Memory | null>(null);
 
   const suggestedTables = [
-    'Familia Real',
-    'Mesa VIP',
-    'Corte de Honor',
-    'Mesa 4 - Primos & Amigos',
-    'Amigos Colegio',
+    'Familia',
+    'Amigos',
+    'Amigos del colegio',
+    'Primos',
+    'Tíos o tías',
   ];
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
+    if (!file) return;
+
+    if (file.type.startsWith('video/')) {
+      const url = URL.createObjectURL(file);
+      const tempVideo = document.createElement('video');
+      tempVideo.src = url;
+      tempVideo.preload = 'metadata';
+      tempVideo.onloadedmetadata = () => {
+        const duration = tempVideo.duration || 15;
+        tempVideo.currentTime = Math.min(1, duration / 2);
+        tempVideo.onseeked = () => {
+          const c = document.createElement('canvas');
+          c.width = tempVideo.videoWidth || 720;
+          c.height = tempVideo.videoHeight || 1280;
+          const ctx = c.getContext('2d');
+          if (ctx) ctx.drawImage(tempVideo, 0, 0, c.width, c.height);
+          const thumb = c.toDataURL('image/jpeg', 0.85);
+          onSelectPhotoForPreview(thumb, { url, duration: Math.min(duration, 30) });
+          onNavigate('recuerdos');
+        };
+      };
+    } else {
       const reader = new FileReader();
       reader.onload = (event) => {
         if (event.target?.result) {
@@ -46,49 +75,109 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   };
 
   return (
-    <div className="w-full flex flex-col space-y-4 pt-2 pb-32">
-      {/* 1. Hero Visual Card: Portrait & Couture Typography */}
-      <section className="relative rounded-2xl overflow-hidden border border-white/10 bg-[#0b0e15] shadow-[0_16px_36px_-10px_rgba(0,0,0,0.85)]">
-        <div className="relative w-full h-[290px] overflow-hidden group">
+    <div className="w-full flex flex-col space-y-4 pt-1 pb-28">
+      {/* Barra superior de Inicio: Botón de Inicio de Sesión con icono de ingreso */}
+      <div className="flex items-center justify-between px-1 py-0.5">
+        <div className="flex items-center gap-1.5 text-xs text-[#8d90a0]">
+          <span className="w-2 h-2 rounded-full bg-[#7bd0ff] animate-pulse"></span>
+          <span className="font-serif-gala tracking-wider text-[#b4c5ff] font-semibold text-xs">
+            {eventSettings.eventName}
+          </span>
+        </div>
+
+        {isAdminAuthenticated ? (
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold">
+              <span className="material-symbols-outlined text-[14px]">shield_person</span>
+              <span>Admin Activo</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => onNavigate('ajustes')}
+              className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-[#2563eb]/25 hover:bg-[#2563eb]/40 text-[#7bd0ff] hover:text-white border border-[#7bd0ff]/40 text-xs font-bold transition-all cursor-pointer active:scale-95 shadow-sm"
+              title="Abrir Solapa de Administración"
+            >
+              <span className="material-symbols-outlined text-[16px]">admin_panel_settings</span>
+              <span>Administración</span>
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={onOpenAdminLogin}
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#181c28] hover:bg-[#2563eb]/30 border border-white/15 hover:border-[#7bd0ff]/50 text-white hover:text-[#7bd0ff] text-xs font-semibold transition-all cursor-pointer active:scale-95 shadow-sm"
+            title="Iniciar sesión de Administrador o Quinceañera"
+          >
+            <span className="material-symbols-outlined text-[18px] text-[#7bd0ff]">login</span>
+            <span>Iniciar Sesión</span>
+          </button>
+        )}
+      </div>
+
+      {/* 1. Hero Visual Card: Portrait & Gala Title */}
+      <section className="relative rounded-3xl overflow-hidden border border-white/10 bg-[#0b0e15] shadow-[0_16px_36px_-10px_rgba(0,0,0,0.85)]">
+        <div className="relative w-full h-[320px] overflow-hidden group">
           <img
             src={eventSettings.coverImage}
             alt="Quinceañera Gala Portrait"
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).src =
+                'https://i.pinimg.com/736x/0d/98/03/0d9803e22c32681563d3df833304ab2a.jpg';
+            }}
             className="w-full h-full object-cover object-top scale-105 group-hover:scale-100 transition-transform duration-700 ease-out"
           />
           {/* Subtle Vignette Gradient */}
           <div className="absolute inset-0 bg-gradient-to-t from-[#0b0e15] via-[#0b0e15]/40 to-transparent pointer-events-none"></div>
 
-          {/* Floating Pill Tag */}
-          <div className="absolute top-4 right-4 flex items-center space-x-1.5 bg-[#0b0e15]/75 backdrop-blur-md px-3 py-1 rounded-full border border-white/15 text-[#b4c5ff] text-xs font-semibold shadow-lg">
-            <span className="material-symbols-outlined text-[14px]">auto_awesome</span>
-            <span>XV Gala Night</span>
-          </div>
+          {/* Floating Monogram or Custom Logo Pill / Botón de Ingreso arriba */}
+          <button
+            type="button"
+            onClick={isAdminAuthenticated ? () => onNavigate('ajustes') : onOpenAdminLogin}
+            className="absolute top-4 right-4 flex items-center space-x-1.5 bg-[#0b0e15]/85 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/20 text-[#b4c5ff] hover:text-white hover:border-[#7bd0ff]/60 text-xs font-semibold shadow-lg active:scale-95 transition-all cursor-pointer"
+            title={isAdminAuthenticated ? 'Panel de Administración' : 'Iniciar Sesión'}
+          >
+            {eventSettings.customLogoUrl ? (
+              <img
+                src={eventSettings.customLogoUrl}
+                alt="Logo"
+                className="w-4 h-4 rounded-full object-cover"
+              />
+            ) : (
+              <span className="material-symbols-outlined text-[16px] text-[#7bd0ff]">
+                {isAdminAuthenticated ? 'admin_panel_settings' : 'login'}
+              </span>
+            )}
+            <span>{isAdminAuthenticated ? 'Admin Activo' : 'Ingreso Admin'}</span>
+          </button>
 
           {/* Editorial Name Overlay */}
           <div className="absolute bottom-3 left-4 right-4 text-left">
             <span className="text-[11px] font-sans-ui text-[#7bd0ff] font-semibold tracking-[0.2em] uppercase block mb-1">
-              Gala de Quince
+              Gala de Quinceañera
             </span>
             <h1 className="font-serif-gala text-3xl font-bold text-white drop-shadow-md tracking-tight">
               {eventSettings.honoreeName}{' '}
-              <span className="text-xl italic font-light text-[#b4c5ff]">Mis XV</span>
+              <span className="text-xl italic font-light text-[#b4c5ff]">B15</span>
             </h1>
+            <p className="text-xs text-[#8d90a0] mt-0.5">
+              {eventSettings.location} • {eventSettings.date}
+            </p>
           </div>
         </div>
 
         {/* Warm Welcome Message */}
-        <div className="p-4 pt-2 bg-[#0b0e15]/90 backdrop-blur-md border-t border-white/5">
+        <div className="p-4 pt-2.5 bg-[#0b0e15]/90 backdrop-blur-md border-t border-white/5 text-left">
           <p className="text-sm text-[#c3c6d7] leading-relaxed font-light">
             {eventSettings.welcomeMessage}
           </p>
         </div>
       </section>
 
-      {/* 2. Guest Recognition / Table Selector */}
-      <section className="p-4 rounded-xl glass-card space-y-2.5">
+      {/* 2. Guest Recognition: Grupo o Parentesco (Familia o Amigos) */}
+      <section className="p-4 rounded-2xl glass-card space-y-3 text-left">
         <label className="flex items-center space-x-2 text-xs font-semibold text-[#e1e2ec] uppercase tracking-wider">
-          <span className="material-symbols-outlined text-[#7bd0ff] text-[18px]">table_restaurant</span>
-          <span>¿Cuál es tu nombre o mesa?</span>
+          <span className="material-symbols-outlined text-[#7bd0ff] text-[18px]">group</span>
+          <span>¿Quién eres? (Familia o Amigos)</span>
         </label>
 
         <div className="relative">
@@ -96,28 +185,22 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             type="text"
             value={guestTable}
             onChange={(e) => onUpdateGuest(guestName, e.target.value)}
-            placeholder="ej. Mesa 4 - Primos & Amigos"
-            className="w-full bg-[#0b0e15]/90 border border-white/15 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-[#8d90a0] focus:outline-none focus:ring-2 focus:ring-[#7bd0ff]/60 transition-all font-sans-ui"
+            placeholder="Ej. Familia, Amigos, Primos..."
+            className="w-full bg-[#0b0e15]/90 border border-white/15 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-[#8d90a0] focus:outline-none focus:ring-2 focus:ring-[#7bd0ff]/60 transition-all font-sans-ui"
           />
-          <button
-            type="button"
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#8d90a0] hover:text-[#7bd0ff] transition-colors"
-          >
-            <span className="material-symbols-outlined text-[18px]">edit</span>
-          </button>
         </div>
 
         {/* Quick Suggestion Pills */}
-        <div className="flex items-center space-x-1.5 pt-1 overflow-x-auto no-scrollbar py-0.5">
-          <span className="text-[11px] text-[#8d90a0] shrink-0 font-medium">Sugeridos:</span>
+        <div className="flex items-center space-x-1.5 pt-0.5 overflow-x-auto no-scrollbar py-0.5">
+          <span className="text-[11px] text-[#8d90a0] shrink-0 font-medium">Opciones:</span>
           {suggestedTables.map((sug) => (
             <button
               key={sug}
               type="button"
               onClick={() => onUpdateGuest(guestName, sug)}
-              className={`border px-2.5 py-0.5 rounded-full text-xs shrink-0 transition-all font-sans-ui ${
+              className={`border px-3 py-1 rounded-full text-xs shrink-0 transition-all font-sans-ui cursor-pointer ${
                 guestTable === sug
-                  ? 'bg-[#2563eb]/30 border-[#7bd0ff] text-[#7bd0ff] font-semibold'
+                  ? 'bg-[#2563eb]/40 border-[#7bd0ff] text-[#7bd0ff] font-bold shadow-sm'
                   : 'bg-[#272a32]/80 text-[#c3c6d7] hover:text-[#7bd0ff] border-white/10'
               }`}
             >
@@ -127,17 +210,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </div>
       </section>
 
-      {/* 3. Primary Call-to-Action: Shutter Trigger */}
+      {/* 3. Primary Shutter Trigger: Cámara de Fotos y Videos */}
       <section className="pt-1">
         <button
           type="button"
           onClick={() => onNavigate('camara')}
-          className="w-full relative group overflow-hidden rounded-xl bg-gradient-to-r from-[#2563eb] via-[#1d4ed8] to-[#00a6e0] p-0.5 shadow-[0_0_24px_rgba(56,189,248,0.35)] active:scale-95 transition-transform duration-150"
+          className="w-full relative group overflow-hidden rounded-2xl bg-gradient-to-r from-[#2563eb] via-[#1d4ed8] to-[#00a6e0] p-0.5 shadow-[0_0_24px_rgba(56,189,248,0.35)] active:scale-95 transition-transform duration-150 cursor-pointer"
         >
-          <div className="w-full bg-gradient-to-r from-[#2563eb] to-[#00a6e0] py-3.5 px-4 rounded-[10px] flex items-center justify-center space-x-3 text-white border-t border-white/25">
-            <span className="material-symbols-outlined text-[24px] text-white animate-pulse">photo_camera</span>
-            <span className="font-semibold text-sm tracking-wide text-white drop-shadow-sm font-sans-ui">
-              Abrir Cámara de Recuerdos
+          <div className="w-full bg-gradient-to-r from-[#2563eb] to-[#00a6e0] py-4 px-4 rounded-[14px] flex items-center justify-center space-x-3 text-white border-t border-white/25">
+            <span className="material-symbols-outlined text-[26px] text-white animate-pulse">photo_camera</span>
+            <span className="font-bold text-sm tracking-wide text-white drop-shadow-sm font-sans-ui">
+              Sacar Foto o Grabar Video
             </span>
             <span className="material-symbols-outlined text-[20px] text-white/80 group-hover:translate-x-1 transition-transform">
               arrow_forward
@@ -146,12 +229,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </button>
       </section>
 
-      {/* 4. Secondary Actions: Subir desde Galería o Ver Muro */}
+      {/* 4. Secondary Action: Subir desde galería & Ver Álbum */}
       <div className="grid grid-cols-2 gap-2.5">
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          className="py-2.5 px-3 rounded-xl bg-[#191b23] hover:bg-[#272a32] border border-white/10 text-xs text-[#c3c6d7] font-semibold flex items-center justify-center gap-2 transition active:scale-[0.98]"
+          className="py-3 px-3 rounded-2xl bg-[#191b23] hover:bg-[#272a32] border border-white/10 text-xs text-[#c3c6d7] font-semibold flex items-center justify-center gap-2 transition active:scale-[0.98] cursor-pointer"
         >
           <span className="material-symbols-outlined text-base text-[#7bd0ff]">add_photo_alternate</span>
           <span>Elegir Galería</span>
@@ -159,7 +242,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept="image/*,video/*"
           className="hidden"
           onChange={handleFileUpload}
         />
@@ -167,169 +250,36 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         <button
           type="button"
           onClick={() => onNavigate('album')}
-          className="py-2.5 px-3 rounded-xl bg-[#191b23] hover:bg-[#272a32] border border-white/10 text-xs text-[#c3c6d7] font-semibold flex items-center justify-center gap-2 transition active:scale-[0.98]"
+          className="py-3 px-3 rounded-2xl bg-[#191b23] hover:bg-[#272a32] border border-white/10 text-xs text-[#c3c6d7] font-semibold flex items-center justify-center gap-2 transition active:scale-[0.98] cursor-pointer"
         >
-          <span className="material-symbols-outlined text-base text-amber-400">auto_awesome_motion</span>
-          <span>Ver Muro en Vivo</span>
+          <span className="material-symbols-outlined text-base text-amber-400">photo_library</span>
+          <span>Ver Álbum ({memories.length})</span>
         </button>
       </div>
 
-      {/* 5. Safe Storage Cloud Sync Information Card */}
-      <section className="rounded-xl p-3.5 glass-card flex items-start space-x-3 shadow-inner">
-        <div className="w-10 h-10 rounded-lg bg-[#272a32] border border-[#7bd0ff]/30 flex items-center justify-center shrink-0 text-[#7bd0ff] shadow-sm">
-          <span className="material-symbols-outlined text-[22px]">cloud_sync</span>
-        </div>
-        <div className="space-y-0.5 flex-1 text-left">
-          <div className="flex items-center space-x-1.5">
-            <span className="text-xs font-semibold text-white">Google Drive Cloud</span>
-            <span className="bg-[#00a6e0]/20 text-[#7bd0ff] text-[10px] font-bold px-1.5 py-0.5 rounded tracking-tight border border-[#7bd0ff]/30">
-              AUTO SYNC
-            </span>
-          </div>
-          <p className="text-xs text-[#8d90a0] leading-snug">
-            Tus fotos se guardan automáticamente en la nube privada de Valentina. Recuerdos seguros para toda la vida.
-          </p>
-          {eventSettings.driveDirectFolderUrl && (
-            <a
-              href={eventSettings.driveDirectFolderUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 text-[11px] text-emerald-400 font-bold hover:underline mt-1"
-            >
-              <span>📁 Abrir carpeta compartida de Google Drive</span>
-              <span className="material-symbols-outlined text-[13px]">open_in_new</span>
-            </a>
-          )}
-        </div>
-      </section>
-
-      {/* 6. Galería de la Fiesta Completa & Dinámica */}
-      <section className="pt-2">
-        <div className="flex justify-between items-center mb-2.5 px-1">
-          <div className="flex items-center space-x-2">
-            <span className="material-symbols-outlined text-[#7bd0ff] text-[20px]">
-              photo_library
-            </span>
-            <span className="font-serif-gala text-base font-bold text-white">
-              Galería de la Fiesta
-            </span>
-          </div>
-          <span className="text-[11px] font-semibold text-[#7bd0ff] bg-[#2563eb]/20 px-2.5 py-0.5 rounded-full border border-[#7bd0ff]/20">
-            {memories.length} {memories.length === 1 ? 'foto' : 'fotos'}
-          </span>
-        </div>
-
-        {/* Dynamic Responsive Grid of Memories */}
-        <div className="grid grid-cols-3 gap-2.5">
-          {memories.slice(0, 5).map((item) => (
-            <div
-              key={item.id}
-              onClick={() => setSelectedMemory(item)}
-              className="relative rounded-xl overflow-hidden aspect-square border border-white/10 group cursor-pointer bg-[#0b0e15] shadow-md hover:border-[#7bd0ff]/60 transition-all duration-300"
-            >
-              <img
-                src={item.image}
-                alt={item.author}
-                className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent opacity-80 group-hover:opacity-100 transition-opacity"></div>
-
-              {/* Bottom tag with author & reaction */}
-              <div className="absolute bottom-1 left-1.5 right-1.5 flex items-center justify-between text-[10px] text-white">
-                <span className="truncate font-medium drop-shadow-sm max-w-[70%]">
-                  {item.author.split(' ')[0]}
-                </span>
-                <span className="text-xs">{item.reaction || '💙'}</span>
-              </div>
-            </div>
-          ))}
-
-          {/* "+ Subir Foto" Action Card */}
-          <button
-            type="button"
-            onClick={() => onNavigate('camara')}
-            className="rounded-xl aspect-square border-2 border-dashed border-[#7bd0ff]/40 flex flex-col items-center justify-center p-2 text-center bg-[#2563eb]/10 hover:border-[#7bd0ff] hover:bg-[#2563eb]/25 transition-all group cursor-pointer active:scale-95 shadow-md"
-          >
-            <div className="w-8 h-8 rounded-full bg-[#7bd0ff]/20 flex items-center justify-center mb-1 group-hover:scale-110 transition-transform">
-              <span className="material-symbols-outlined text-[#7bd0ff] text-xl">
-                add_a_photo
-              </span>
-            </div>
-            <span className="text-[11px] text-white font-bold tracking-tight">Tu foto</span>
-            <span className="text-[9px] text-[#7bd0ff]">aquí</span>
-          </button>
-        </div>
-
-        {/* Ver Álbum Completo Button */}
+      {/* 5. Collaborative Playlist Action */}
+      {onOpenPlaylist && (
         <button
           type="button"
-          onClick={() => onNavigate('album')}
-          className="w-full mt-3 py-3 px-4 rounded-xl bg-[#1d1f27] hover:bg-[#2563eb]/20 border border-white/10 hover:border-[#7bd0ff]/40 text-xs font-semibold text-white flex items-center justify-center gap-2 transition-all active:scale-[0.98] shadow-sm cursor-pointer"
+          onClick={onOpenPlaylist}
+          className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-[#191b23] via-[#141722] to-[#1e2230] hover:border-[#7bd0ff]/40 border border-white/10 text-xs text-white font-semibold flex items-center justify-between transition-all active:scale-[0.99] cursor-pointer shadow-md"
         >
-          <span>Ver todas las fotos en el Muro ({memories.length})</span>
-          <span className="material-symbols-outlined text-sm text-[#7bd0ff]">arrow_forward</span>
-        </button>
-      </section>
-
-      {/* Lightbox Modal for Full View when tapping any photo */}
-      {selectedMemory && (
-        <div
-          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200"
-          onClick={() => setSelectedMemory(null)}
-        >
-          <div
-            className="relative max-w-sm w-full bg-[#10131a] rounded-3xl overflow-hidden border border-white/15 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Image */}
-            <div className="relative aspect-[4/5] bg-black">
-              <img
-                src={selectedMemory.image}
-                alt={selectedMemory.author}
-                className="w-full h-full object-cover"
-              />
-              <button
-                type="button"
-                onClick={() => setSelectedMemory(null)}
-                className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-white flex items-center justify-center hover:bg-black transition-colors cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-base">close</span>
-              </button>
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-[#2563eb] to-[#00a6e0] flex items-center justify-center text-white shrink-0">
+              <span className="material-symbols-outlined text-[18px]">queue_music</span>
             </div>
-
-            {/* Content Details */}
-            <div className="p-4 space-y-2 text-left">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="text-sm font-bold text-white font-sans-ui">
-                    {selectedMemory.author}
-                  </h4>
-                  <p className="text-[11px] text-[#8d90a0]">
-                    {selectedMemory.table} · {selectedMemory.time}
-                  </p>
-                </div>
-                <span className="text-2xl">{selectedMemory.reaction || '💙'}</span>
-              </div>
-
-              {selectedMemory.message && (
-                <p className="text-xs text-[#c3c6d7] italic bg-[#0b0e15] p-2.5 rounded-xl border border-white/5">
-                  "{selectedMemory.message}"
-                </p>
-              )}
-
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedMemory(null);
-                  onNavigate('album');
-                }}
-                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-[#2563eb] to-[#7bd0ff] text-[#0b0e15] text-xs font-bold transition-opacity hover:opacity-95 cursor-pointer mt-1"
-              >
-                Ver en el Muro en Vivo
-              </button>
+            <div className="text-left">
+              <h4 className="text-xs font-bold text-white">Playlist Colaborativa (YouTube & Spotify)</h4>
+              <p className="text-[10px] text-[#8d90a0]">Pide canciones para que suenen en vivo en la fiesta</p>
             </div>
           </div>
-        </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="px-2 py-0.5 rounded-full bg-[#2563eb]/20 text-[#7bd0ff] text-[10px] font-bold font-mono border border-[#7bd0ff]/30">
+              {playlistCount || 0} temas
+            </span>
+            <span className="material-symbols-outlined text-sm text-[#8d90a0]">arrow_forward</span>
+          </div>
+        </button>
       )}
     </div>
   );

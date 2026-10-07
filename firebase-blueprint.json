@@ -1,0 +1,116 @@
+{
+  "entities": {
+    "Memory": {
+      "title": "Memory",
+      "description": "Recuerdo de foto capturada en vivo por un invitado o fotógrafo del evento",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Identificador único del recuerdo"
+        },
+        "author": {
+          "type": "string",
+          "description": "Nombre del invitado o autor de la foto",
+          "maxLength": 100
+        },
+        "table": {
+          "type": "string",
+          "description": "Mesa o ubicación del invitado",
+          "maxLength": 100
+        },
+        "time": {
+          "type": "string",
+          "description": "Hora de captura en formato legible",
+          "maxLength": 50
+        },
+        "timestamp": {
+          "type": "number",
+          "description": "Marca de tiempo Unix de la foto"
+        },
+        "message": {
+          "type": "string",
+          "description": "Dedicatoria o mensaje para la quinceañera",
+          "maxLength": 500
+        },
+        "reaction": {
+          "type": "string",
+          "description": "Emoji de reacción seleccionado",
+          "maxLength": 10
+        },
+        "likes": {
+          "type": "number",
+          "description": "Cantidad de me gusta recibidos"
+        },
+        "image": {
+          "type": "string",
+          "description": "URL o base64 de la foto en gala"
+        },
+        "momentTag": {
+          "type": "string",
+          "description": "Etiqueta del momento (Vals, Brindis, Cotillón)",
+          "maxLength": 100
+        },
+        "verified": {
+          "type": "boolean",
+          "description": "Indica si la foto fue aprobada"
+        }
+      },
+      "required": ["id", "author", "image", "timestamp"]
+    },
+    "EventSettings": {
+      "title": "EventSettings",
+      "description": "Configuración global de la fiesta de 15 años",
+      "type": "object",
+      "properties": {
+        "eventName": { "type": "string", "maxLength": 150 },
+        "honoreeName": { "type": "string", "maxLength": 100 },
+        "celebrationType": { "type": "string", "maxLength": 100 },
+        "date": { "type": "string", "maxLength": 50 },
+        "location": { "type": "string", "maxLength": 200 },
+        "hashtag": { "type": "string", "maxLength": 100 },
+        "coverImage": { "type": "string" },
+        "welcomeMessage": { "type": "string", "maxLength": 500 },
+        "storageMethod": { "type": "string", "maxLength": 50 },
+        "autoDownloadToDevice": { "type": "boolean" },
+        "strictDeletePermission": { "type": "boolean" }
+      },
+      "required": ["eventName", "honoreeName", "date"]
+    },
+    "PlaylistItem": {
+      "title": "PlaylistItem",
+      "description": "Canción pedida colaborativamente por los invitados (YouTube o Spotify)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Identificador único de la canción" },
+        "title": { "type": "string", "maxLength": 200, "description": "Título de la canción" },
+        "artist": { "type": "string", "maxLength": 150, "description": "Artista de la canción" },
+        "addedBy": { "type": "string", "maxLength": 100, "description": "Nombre del invitado que pidió el tema" },
+        "table": { "type": "string", "maxLength": 100, "description": "Mesa o grupo del invitado" },
+        "platform": { "type": "string", "enum": ["youtube", "spotify", "audio"], "description": "Plataforma musical" },
+        "url": { "type": "string", "description": "Enlace a YouTube, Spotify o audio" },
+        "videoId": { "type": "string", "maxLength": 50, "description": "ID de video en YouTube" },
+        "spotifyId": { "type": "string", "maxLength": 50, "description": "ID de track en Spotify" },
+        "likes": { "type": "number", "description": "Votos de los invitados" },
+        "status": { "type": "string", "enum": ["pending", "playing", "played"], "description": "Estado en cola" },
+        "timestamp": { "type": "number", "description": "Marca de tiempo cuando se agregó" },
+        "note": { "type": "string", "maxLength": 300, "description": "Mensaje o dedicatoria al pedir la canción" }
+      },
+      "required": ["id", "title", "platform", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/memories/{memoryId}": {
+      "schema": "Memory",
+      "description": "Colección de fotos y recuerdos del evento"
+    },
+    "/settings/{settingId}": {
+      "schema": "EventSettings",
+      "description": "Documentos de configuración global del evento"
+    },
+    "/playlist/{songId}": {
+      "schema": "PlaylistItem",
+      "description": "Lista de canciones colaborativas pedidas por los invitados"
+    }
+  }
+}

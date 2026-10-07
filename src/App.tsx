@@ -1,8 +1,24 @@
 import { useState, useEffect } from 'react';
-import { EventSettings, FrameType, Memory, TabType } from './types';
-import { initialEventSettings, initialMemories } from './data/initialData';
+import { EventSettings, FrameType, Memory, TabType, PlaylistItem } from './types';
+import { initialEventSettings, initialMemories, initialPlaylist } from './data/initialData';
+import { saveEventMemory, deleteEventMemory, fetchEventMemories } from './utils/api';
+import {
+  subscribeToCloudMemories,
+  subscribeToCloudSettings,
+  saveSettingsToCloud,
+  seedMemoriesToCloud,
+  fetchAllCloudMemories,
+  toggleCloudLikeWithGuest,
+  subscribeToCloudPlaylist,
+  addSongToCloudPlaylist,
+  voteSongInCloudPlaylist,
+  deleteSongFromCloud,
+  seedPlaylistToCloud,
+} from './utils/firestoreService';
+import { useOnlinePresence } from './utils/presence';
 import { TopAppBar } from './components/TopAppBar';
 import { BottomNavBar } from './components/BottomNavBar';
+import { MusicPlayerBar } from './components/MusicPlayerBar';
 import { HomeScreen } from './components/screens/HomeScreen';
 import { CameraScreen } from './components/screens/CameraScreen';
 import { PreviewScreen } from './components/screens/PreviewScreen';
@@ -11,14 +27,17 @@ import { ProjectorScreen } from './components/screens/ProjectorScreen';
 import { SettingsScreen } from './components/screens/SettingsScreen';
 import { QRCodeModal } from './components/QRCodeModal';
 import { AdminLoginModal } from './components/AdminLoginModal';
+import { PlaylistModal } from './components/PlaylistModal';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<TabType>('inicio');
   const [guestName, setGuestName] = useState<string>('');
   const [guestTable, setGuestTable] = useState<string>('Mesa 4 - Primos & Amigos');
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
+  const [capturedVideo, setCapturedVideo] = useState<{ url: string; duration: number } | null>(null);
   const [selectedFrame, setSelectedFrame] = useState<FrameType>('elegante');
   const [isQrModalOpen, setIsQrModalOpen] = useState<boolean>(false);
+  const [isPlaylistModalOpen, setIsPlaylistModalOpen] = useState<boolean>(false);
   const [isAdminLoginModalOpen, setIsAdminLoginModalOpen] = useState<boolean>(false);
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => {
     try {
@@ -27,6 +46,19 @@ export default function App() {
       return false;
     }
   });
+
+  // Collaborative party playlist (YouTube & Spotify)
+  const [playlist, setPlaylist] = useState<PlaylistItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('mis15_playlist');
+      return saved ? JSON.parse(saved) : initialPlaylist;
+    } catch {
+      return initialPlaylist;
+    }
+  });
+
+  // Track online guests presence in real-time
+  const { onlineGuests, guestId } = useOnlinePresence(guestName, guestTable);
 
   // Load and persist event settings
   const [eventSettings, setEventSettings] = useState<EventSettings>(() => {
@@ -64,6 +96,82 @@ export default function App() {
     }
   });
 
+  // Real-time synchronization with Cloud Firestore, Server, and IndexedDB
+  useEffect(() => {
+    let isMounted = true;
+
+    // 1. Live subscription to Google Cloud Firestore (Primary Cloud Storage!)
+    const unsubscribeCloudMemories = subscribeToCloudMemories((cloudMems) => {
+      if (!isMounted) return;
+      if (cloudMems && cloudMems.length > 0) {
+        setMemories(cloudMems);
+      } else {
+        // First-time boot: seed initial photos to Google Cloud Firestore
+        seedMemoriesToCloud(initialMemories).then(() => {
+          fetchAllCloudMemories().then((seeded) => {
+            if (seeded && seeded.length > 0 && isMounted) {
+              setMemories(seeded);
+            }
+          });
+        });
+      }
+    });
+
+    const unsubscribeCloudSettings = subscribeToCloudSettings((cloudSettings) => {
+      if (cloudSettings && isMounted) {
+        setEventSettings((prev) => {
+          // Si la configuración en la nube tiene una fecha de actualización anterior a la local, no sobrescribir
+          if (
+            prev.settingsUpdatedAt &&
+            cloudSettings.settingsUpdatedAt &&
+            cloudSettings.settingsUpdatedAt < prev.settingsUpdatedAt
+          ) {
+            return prev;
+          }
+          return { ...prev, ...cloudSettings };
+        });
+      }
+    });
+
+    // 2. Live subscription to Collaborative Party Playlist (YouTube & Spotify)
+    const unsubscribeCloudPlaylist = subscribeToCloudPlaylist((cloudPlaylist) => {
+      if (!isMounted) return;
+      if (cloudPlaylist && cloudPlaylist.length > 0) {
+        setPlaylist(cloudPlaylist);
+      } else {
+        seedPlaylistToCloud(initialPlaylist);
+      }
+    });
+
+    // 3. Secondary fallback poll to server API / IndexedDB
+    const syncData = async () => {
+      try {
+        const serverMems = await fetchEventMemories();
+        if (serverMems && isMounted && serverMems.length > 0) {
+          setMemories((current) => {
+            if (current.length !== serverMems.length || current[0]?.id !== serverMems[0]?.id) {
+              return serverMems;
+            }
+            return current;
+          });
+        }
+      } catch (err) {
+        console.warn('Sync error:', err);
+      }
+    };
+
+    syncData();
+    const interval = setInterval(syncData, 4000);
+
+    return () => {
+      isMounted = false;
+      unsubscribeCloudMemories();
+      unsubscribeCloudSettings();
+      unsubscribeCloudPlaylist();
+      clearInterval(interval);
+    };
+  }, []);
+
   useEffect(() => {
     try {
       localStorage.setItem('mis15_settings', JSON.stringify(eventSettings));
@@ -76,9 +184,17 @@ export default function App() {
     try {
       localStorage.setItem('mis15_memories', JSON.stringify(memories));
     } catch (e) {
-      console.warn('Could not persist memories:', e);
+      console.warn('Could not persist memories to localStorage (using IndexedDB/Server):', e);
     }
   }, [memories]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('mis15_playlist', JSON.stringify(playlist));
+    } catch (e) {
+      console.warn('Could not persist playlist:', e);
+    }
+  }, [playlist]);
 
   const handleNavigate = (tab: TabType) => {
     if (tab === 'ajustes' && !isAdminAuthenticated) {
@@ -112,19 +228,34 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleCapturePhoto = (photoBase64: string, frame: FrameType) => {
+  const handleCapturePhoto = (
+    photoBase64: string,
+    frame: FrameType,
+    videoData?: { url: string; duration: number }
+  ) => {
     setCapturedPhoto(photoBase64);
+    setCapturedVideo(videoData || null);
     setSelectedFrame(frame);
     setCurrentTab('recuerdos');
   };
 
-  const handleSelectPhotoForPreview = (photoBase64: string) => {
+  const handleSelectPhotoForPreview = (
+    photoBase64: string,
+    videoData?: { url: string; duration: number }
+  ) => {
     setCapturedPhoto(photoBase64);
+    setCapturedVideo(videoData || null);
     setSelectedFrame('elegante');
   };
 
   const handleSaveMemory = (newMemory: Memory) => {
+    // Assign sequential memory number: #1, #2, #3...
+    if (!newMemory.memoryNumber) {
+      const maxNum = memories.reduce((max, m) => Math.max(max, m.memoryNumber || 0), 0);
+      newMemory.memoryNumber = maxNum + 1;
+    }
     setMemories((prev) => [newMemory, ...prev]);
+    saveEventMemory(newMemory);
   };
 
   const handleDeleteMemory = (id: string) => {
@@ -133,17 +264,36 @@ export default function App() {
       return;
     }
     setMemories((prev) => prev.filter((m) => m.id !== id));
+    deleteEventMemory(id);
   };
 
   const handleToggleLike = (id: string) => {
     setMemories((prev) =>
       prev.map((mem) => {
         if (mem.id === id) {
-          const isLiked = !mem.isLiked;
+          const currentLikedBy = Array.isArray(mem.likedBy) ? mem.likedBy : [];
+          const hasLiked = currentLikedBy.includes(guestId);
+          const isLiked = !hasLiked;
+          const newLikes = isLiked ? (mem.likes || 0) + 1 : Math.max(0, (mem.likes || 1) - 1);
+          const updatedLikedBy = isLiked
+            ? [...currentLikedBy, guestId]
+            : currentLikedBy.filter((g) => g !== guestId);
+
+          // Update in Cloud Firestore with guest identification
+          toggleCloudLikeWithGuest(id, guestId, guestName).catch(() => {});
+
+          // Update in local server with guest identification
+          fetch(`/api/memories/${id}/like`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ guestId }),
+          }).catch(() => {});
+
           return {
             ...mem,
             isLiked,
-            likes: isLiked ? mem.likes + 1 : Math.max(0, mem.likes - 1),
+            likes: newLikes,
+            likedBy: updatedLikedBy,
           };
         }
         return mem;
@@ -151,13 +301,48 @@ export default function App() {
     );
   };
 
-  // If in Projector Mode, show full-screen view without mobile shell
-  if (currentTab === 'proyector') {
+  // Collaborative Playlist Actions (YouTube & Spotify)
+  const handleAddSong = (newSong: PlaylistItem) => {
+    setPlaylist((prev) => [newSong, ...prev.filter((s) => s.id !== newSong.id)]);
+    addSongToCloudPlaylist(newSong).catch(() => {});
+  };
+
+  const handleVoteSong = (songId: string) => {
+    setPlaylist((prev) =>
+      prev.map((s) => {
+        if (s.id === songId) {
+          const currentLiked = Array.isArray(s.likedBy) ? s.likedBy : [];
+          const hasVoted = currentLiked.includes(guestId);
+          const newLikedBy = hasVoted ? currentLiked.filter((id) => id !== guestId) : [...currentLiked, guestId];
+          const newLikes = hasVoted ? Math.max(0, s.likes - 1) : s.likes + 1;
+          return { ...s, likes: newLikes, likedBy: newLikedBy };
+        }
+        return s;
+      })
+    );
+    voteSongInCloudPlaylist(songId, guestId).catch(() => {});
+  };
+
+  const handleDeleteSong = (songId: string) => {
+    setPlaylist((prev) => prev.filter((s) => s.id !== songId));
+    deleteSongFromCloud(songId).catch(() => {});
+  };
+
+  // If in Projector / En Vivo Mode, show full-screen live view without mobile shell
+  if (currentTab === 'proyector' || currentTab === 'envivo') {
     return (
       <ProjectorScreen
         eventSettings={eventSettings}
         memories={memories}
         onNavigate={handleNavigate}
+        playlist={playlist}
+        onAddSong={handleAddSong}
+        onVoteSong={handleVoteSong}
+        onDeleteSong={handleDeleteSong}
+        guestName={guestName}
+        guestTable={guestTable}
+        guestId={guestId}
+        isAdminAuthenticated={isAdminAuthenticated}
       />
     );
   }
@@ -175,7 +360,29 @@ export default function App() {
           currentTab={currentTab}
           onNavigate={handleNavigate}
           eventSettings={eventSettings}
+          isAdminAuthenticated={isAdminAuthenticated}
+          onOpenAdminLogin={() => setIsAdminLoginModalOpen(true)}
+          onOpenPlaylist={() => setIsPlaylistModalOpen(true)}
         />
+
+        {/* Music Player Bar (Reproducir y Subir Canción para que se escuche) */}
+        {currentTab !== 'camara' && (
+          <MusicPlayerBar
+            eventSettings={eventSettings}
+            onOpenPlaylist={() => setIsPlaylistModalOpen(true)}
+            playlistCount={playlist.length}
+            onUpdateSong={(songUrl, songTitle) => {
+              const updated = {
+                ...eventSettings,
+                backgroundSongUrl: songUrl,
+                backgroundSongTitle: songTitle,
+                settingsUpdatedAt: Date.now(),
+              };
+              setEventSettings(updated);
+              saveSettingsToCloud(updated).catch(() => {});
+            }}
+          />
+        )}
 
         {/* Screen Content Views */}
         <main className="px-4 flex-1 flex flex-col">
@@ -191,6 +398,11 @@ export default function App() {
               onNavigate={handleNavigate}
               onSelectPhotoForPreview={handleSelectPhotoForPreview}
               memories={memories}
+              onlineGuests={onlineGuests}
+              isAdminAuthenticated={isAdminAuthenticated}
+              onOpenAdminLogin={() => setIsAdminLoginModalOpen(true)}
+              onOpenPlaylist={() => setIsPlaylistModalOpen(true)}
+              playlistCount={playlist.length}
             />
           )}
 
@@ -206,6 +418,7 @@ export default function App() {
             <PreviewScreen
               eventSettings={eventSettings}
               capturedPhoto={capturedPhoto}
+              capturedVideo={capturedVideo}
               guestName={guestName}
               guestTable={guestTable}
               selectedFrame={selectedFrame}
@@ -222,6 +435,8 @@ export default function App() {
               onDeleteMemory={handleDeleteMemory}
               isAdminAuthenticated={isAdminAuthenticated}
               eventSettings={eventSettings}
+              onlineGuests={onlineGuests}
+              currentGuestName={guestName}
             />
           )}
 
@@ -239,7 +454,11 @@ export default function App() {
         </main>
 
         {/* Bottom Floating Navigation */}
-        <BottomNavBar currentTab={currentTab} onNavigate={handleNavigate} />
+        <BottomNavBar
+          currentTab={currentTab}
+          onNavigate={handleNavigate}
+          isAdminAuthenticated={isAdminAuthenticated}
+        />
       </div>
 
       {/* QR Code Modal for Tables */}
@@ -256,6 +475,21 @@ export default function App() {
         onSuccess={handleAdminLoginSuccess}
         expectedUser={eventSettings.adminUser || 'uriel'}
         expectedPassword={eventSettings.adminPassword || '94909766'}
+      />
+
+      {/* Collaborative Playlist Modal for Guests */}
+      <PlaylistModal
+        isOpen={isPlaylistModalOpen}
+        onClose={() => setIsPlaylistModalOpen(false)}
+        playlist={playlist}
+        onAddSong={handleAddSong}
+        onVoteSong={handleVoteSong}
+        onDeleteSong={handleDeleteSong}
+        currentGuestName={guestName}
+        currentGuestTable={guestTable}
+        guestId={guestId}
+        isAdminAuthenticated={isAdminAuthenticated}
+        eventSettings={eventSettings}
       />
     </div>
   );
